@@ -17,7 +17,9 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
-
+dependencies = [
+    'requests',
+]
 [project.urls]
 "Homepage" = "https://github.com/oberth-effect/piqtec"
 "Bug Tracker" = "https://github.com/oberth-effect/piqtec/issues"
