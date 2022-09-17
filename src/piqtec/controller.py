@@ -1,11 +1,12 @@
 import requests
 
 from .constants import PROTO, API_ADDRESS
+from .devices import Room, Sunblind
 from .exceptions import APIError
 from .helpers import split_data
-from .devices import Room, Sunblind
 
-class Platform:
+
+class Controller:
     host: str
     __url: str
     name: str

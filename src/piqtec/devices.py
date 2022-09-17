@@ -1,5 +1,5 @@
-from typing import Callable
 from datetime import datetime
+from typing import Callable
 
 from .constants import ROOM_API, ROOM_MODE, SUNBLIND_API, SUNBLIND_COMMANDS, SUNBLIND_FULL_TILT, SUNBLIND_FULL_EXTENDED
 from .exceptions import InvalidSetCommand, UpdateError, ConfigurationError
