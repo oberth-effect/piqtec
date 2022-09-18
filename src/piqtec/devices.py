@@ -1,7 +1,15 @@
 from datetime import datetime
 from typing import Callable
 
-from .constants import ROOM_API, ROOM_MODE, SUNBLIND_API, SUNBLIND_COMMANDS, SUNBLIND_FULL_TILT, SUNBLIND_FULL_EXTENDED
+from .constants import (
+    ROOM_API,
+    ROOM_MODE,
+    SUNBLIND_API,
+    SUNBLIND_COMMANDS,
+    SUNBLIND_TILT_CLOSED,
+    SUNBLIND_FULL_EXTENDED,
+    SUNBLIND_TILT_OPEN,
+)
 from .exceptions import InvalidSetCommand, UpdateError, ConfigurationError
 from .helpers import encode_timeout, decode_timeout
 
@@ -125,7 +133,7 @@ class Sunblind(BaseDevice):
     def _calculate_tilt_time(self, tilt: int) -> int:
         """Helper function that calculates tilt time"""
         diff = tilt - self.rotation
-        return int(diff / SUNBLIND_FULL_TILT * self.full_tilt_time)
+        return int(diff / SUNBLIND_TILT_CLOSED * self.full_tilt_time)
 
     def tilt(self, tilt: int):
         """Attempts to send exact timing to reach desired rotation position"""
@@ -146,9 +154,8 @@ class Sunblind(BaseDevice):
     def _calculate_move_time(self, pos):
         """Helper function that calculates move time"""
         diff = pos - self.position
-        print(self._calculate_tilt_time(180 if diff > 0 else 0))
         return int(float(diff) / SUNBLIND_FULL_EXTENDED * self.move_time * 1000 + self._calculate_tilt_time(
-            180 if diff > 0 else 0))
+            SUNBLIND_TILT_CLOSED if diff > 0 else SUNBLIND_TILT_OPEN))
 
     def move(self, pos: int):
         """Attempts to send exact timing to reach desired position"""
