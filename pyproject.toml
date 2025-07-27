@@ -1,0 +1,46 @@
+[project]
+name = "piqtec"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+license = "CC-BY-NC-SA-4.0"
+license-files = ["LICENCE"]
+authors = [
+    { name = "Štěpán Venclík", email = "stepan.venclik@gmail.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "requests>=2.32.4",
+]
+
+[build-system]
+requires = ["uv_build>=0.8.3,<0.9.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.12.5",
+]
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    # pycodestyle
+    "E",
+    # Pyflakes
+    "F",
+    # pyupgrade
+    "UP",
+    # flake8-bugbear
+    "B",
+    # flake8-simplify
+    "SIM",
+    # flake8-comperhensions
+    "C4",
+    # flake8-builitins
+    "A",
+    # isort
+    "I",
+]
