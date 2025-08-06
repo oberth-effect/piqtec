@@ -98,6 +98,8 @@ class Controller:
 
     def _get_xml(self) -> ElementTree.Element:
         response = requests.get(self._url + XML_PATH)
+        if response.status_code != 200:
+            raise ConnectionError(f"Error getting XML: {response.status_code}")
         return ElementTree.fromstring(response.content)
 
     def _get_apis(self) -> list[API]:
@@ -238,11 +240,15 @@ class Controller:
         for chunk in chunks:
             url = f"{self._url}{API_PATH}{chunk}"
             r = requests.get(url)
+            if r.status_code != 200:
+                raise ConnectionError(f"HTTP ERROR: {r.status_code}")
             responses.update(parse_responses(r.text))
 
         if path_set:
             url = f"{self._url}{API_PATH}{path_set}"
             r = requests.get(url)
+            if r.status_code != 200:
+                raise ConnectionError(f"HTTP ERROR: {r.status_code}")
             responses.update(parse_responses(r.text))
 
         return responses
