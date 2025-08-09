@@ -1,13 +1,16 @@
-import contextlib
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from ..constants import DRIVER_PREFIX, SUNBLIND_VARS
-from ..type_helpers import Get, ResponseSet
-from .generic import API, DriverAPI
+from ..constants import MOVE_TIME_UNITS, SUNBLIND_COMMANDS, SUNBLIND_EXTENDED, SUNBLIND_TILT_CLOSED, SUNBLIND_VARS
+from ..utils import CoerceTypesMixin
+from .generic import StatefulAPI
+
+if TYPE_CHECKING:
+    pass
 
 
 @dataclass
-class SunblindState:
+class SunblindState(CoerceTypesMixin):
     failure: bool
     out_up_1: bool
     out_up_2: bool
@@ -38,36 +41,54 @@ class SunblindState:
     command: int
     state2: int
 
-    def __post_init__(self):
-        # Try to coerce types
-        for field in fields(self):
-            if callable(field.type):
-                with contextlib.suppress(ValueError):
-                    if field.type is bool:
-                        setattr(self, field.name, field.type(int(getattr(self, field.name))))
-                    else:
-                        setattr(self, field.name, field.type(getattr(self, field.name)))
 
+class SunblindAPI(StatefulAPI[SunblindState]):
+    @classmethod
+    def _var_map(cls):
+        return SUNBLIND_VARS
 
-class SunblindAPI(API):
-    sunblind_id: str
+    @classmethod
+    def _state_cls(cls):
+        return SunblindState
 
-    _drivers: dict[str, DriverAPI]
-    _sunblind_url: str
+    def set_command(self, command: int):
+        r = self.drivers["command"].set_request(str(command))
+        self._controller.api_call(r)
 
-    def __init__(self, sunblind_id: str, drivers: dict[str, DriverAPI]):
-        self.sunblind_id = sunblind_id
-        # Map room drivers
-        self._drivers = {}
-        for var in SUNBLIND_VARS:
-            d = drivers.get(f"{sunblind_id}.{var.value}")
-            if d:
-                self._drivers[var.name] = d
+    def set_step_time(self, step_time: int):
+        r = self.drivers["step_time"].set_request(str(step_time))
+        self._controller.api_call(r)
 
-        self._sunblind_url = f"{DRIVER_PREFIX}/{self._drivers['name'].structure_id}"
+    def set_rotation(self, rotation: int):
+        if rotation < 0 or rotation > SUNBLIND_TILT_CLOSED:
+            raise ValueError(f"Rotation must be between 0 and {SUNBLIND_TILT_CLOSED}")
 
-    def create_get_request(self) -> Get:
-        return Get(path=self._sunblind_url, expected_length=len(self._drivers))
+        self.set_command(SUNBLIND_COMMANDS.STOP)
+        current = self.get_update()
+        if current.rotation != rotation:
+            diff = float(rotation - current.rotation)
+            step_time = abs(int(diff / SUNBLIND_TILT_CLOSED * current.tilt_time)) + current.move_time
+            self.set_step_time(step_time)
+            command = SUNBLIND_COMMANDS.STEP_DOWN if diff > 0 else SUNBLIND_COMMANDS.STEP_UP
+            self.set_command(command)
 
-    def parse(self, response_set: ResponseSet):
-        return SunblindState(**{key: driver.parse(response_set) for key, driver in self._drivers.items()})
+    def set_position(self, position: int):
+        if position < 0 or position > SUNBLIND_EXTENDED:
+            raise ValueError(f"Position must be between 0 and {SUNBLIND_EXTENDED}")
+
+        self.set_command(SUNBLIND_COMMANDS.STOP)
+        current = self.get_update()
+        if current.position != position:
+            diff = float(position - current.position)
+            tilt_target = SUNBLIND_TILT_CLOSED if diff > 0 else 0
+            tilt_diff = float(tilt_target - current.rotation)
+            step_time = (
+                abs(
+                    int(diff / SUNBLIND_EXTENDED * current.move_time * MOVE_TIME_UNITS)
+                    + int(tilt_diff / SUNBLIND_TILT_CLOSED * current.tilt_time)
+                )
+                + current.move_time
+            )
+            self.set_step_time(step_time)
+            command = SUNBLIND_COMMANDS.STEP_DOWN if diff > 0 else SUNBLIND_COMMANDS.STEP_UP
+            self.set_command(command)

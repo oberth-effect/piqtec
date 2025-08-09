@@ -1,13 +1,13 @@
 import contextlib
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 
-from ..constants import DRIVER_PREFIX, ROOM_VARS
-from ..type_helpers import Get, ResponseSet
-from .generic import API, DriverAPI
+from ..constants import ROOM_VARS
+from ..utils import CoerceTypesMixin
+from .generic import StatefulAPI
 
 
 @dataclass
-class RoomState:
+class RoomState(CoerceTypesMixin):
     fan_command: int
     name: str
     eco_mode: bool
@@ -51,43 +51,17 @@ class RoomState:
     calendar_temperature: float
 
     def __post_init__(self):
-        # Try to coerce types
-        for field in fields(self):
-            if callable(field.type):
-                with contextlib.suppress(ValueError):
-                    if field.type is bool:
-                        setattr(self, field.name, field.type(int(getattr(self, field.name))))
-                    else:
-                        setattr(self, field.name, field.type(getattr(self, field.name)))
-
+        super().__post_init__()
+        # Handle requested_temperature separately
         with contextlib.suppress(ValueError):
-            # handle self.requested_temperature separately
             self.requested_temperature = float(self.requested_temperature)
 
 
-class RoomAPI(API):
-    room_id: str
+class RoomAPI(StatefulAPI[RoomState]):
+    @classmethod
+    def _var_map(cls):
+        return ROOM_VARS
 
-    _drivers: dict[str, DriverAPI]
-    _room_url: str
-
-    def __init__(self, room_id: str, drivers: dict[str, DriverAPI]):
-        self.room_id = room_id
-        # Map room drivers
-        self._drivers = {}
-        for var in ROOM_VARS:
-            d = drivers.get(f"{room_id}.{var.value}")
-            if d:
-                self._drivers[var.name] = d
-                # # Dynamically create methods
-                # setattr(self, f"get_{var.name}_request", self._drivers[var.name].create_get_request)
-                # setattr(self, f"set_{var.name}_request", self._drivers[var.name].create_set_request)
-                # setattr(self, f"parse_{var.name}t", self._drivers[var.name].parse)
-
-        self._room_url = f"{DRIVER_PREFIX}/{self._drivers['name'].structure_id}"
-
-    def create_get_request(self) -> Get:
-        return Get(path=self._room_url, expected_length=len(self._drivers))
-
-    def parse(self, response_set: ResponseSet):
-        return RoomState(**{key: driver.parse(response_set) for key, driver in self._drivers.items()})
+    @classmethod
+    def _state_cls(cls):
+        return RoomState

@@ -1,4 +1,5 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Self
 
 type Request = Get | Set
 
@@ -25,5 +26,8 @@ class Set:
 
 @dataclass
 class RequestSet:
-    getters: list[Get]
-    setters: list[Set]
+    getters: list[Get] = field(default_factory=list)
+    setters: list[Set] = field(default_factory=list)
+
+    def __add__(self, other: Self) -> Self:
+        return RequestSet(getters=self.getters + other.getters, setters=self.setters + other.setters)
