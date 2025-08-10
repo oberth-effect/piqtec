@@ -48,6 +48,7 @@ class Controller:
     name: str
     rooms: dict[str, RoomAPI]
     sunblinds: dict[str, SunblindAPI]
+    encoding: str
 
     _url: str
     _room_ids: list[str]
@@ -57,9 +58,10 @@ class Controller:
     _pages_by_name: dict[str, PageAPI]
     _system_drivers: dict[str, DriverAPI]
 
-    def __init__(self, host: str, name: str = "IQtec Controller", proto: str = "http"):
+    def __init__(self, host: str, name: str = "IQtec Controller", proto: str = "http", encoding: str = "Windows-1250"):
         self._url = f"{proto}://{host}"
         self.name = name
+        self.encoding = encoding
 
         # Connect to the Device and set up apis
         apis = self._get_apis()
@@ -136,6 +138,7 @@ class Controller:
         for chunk in chunks:
             url = f"{self._url}{API_PATH}{chunk}"
             r = requests.get(url)
+            r.encoding = self.encoding
             if r.status_code != 200:
                 raise ConnectionError(f"HTTP ERROR: {r.status_code}")
             responses.update(parse_responses(r.text))
