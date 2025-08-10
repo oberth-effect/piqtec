@@ -1,7 +1,14 @@
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from ..constants import MOVE_TIME_UNITS, SUNBLIND_COMMANDS, SUNBLIND_EXTENDED, SUNBLIND_TILT_CLOSED, SUNBLIND_VARS
+from ..constants import (
+    MOVE_TIME_UNITS,
+    SUNBLIND_COMMANDS,
+    SUNBLIND_EXTENDED,
+    SUNBLIND_TILT_CLOSED,
+    SUNBLIND_VARS,
+    TILT_TIME_OFFSET,
+)
 from ..utils import CoerceTypesMixin
 from .generic import StatefulAPI
 
@@ -67,7 +74,7 @@ class SunblindAPI(StatefulAPI[SunblindState]):
         current = self.get_update()
         if current.rotation != rotation:
             diff = float(rotation - current.rotation)
-            step_time = abs(int(diff / SUNBLIND_TILT_CLOSED * current.tilt_time)) + current.move_time
+            step_time = abs(int(diff / SUNBLIND_TILT_CLOSED * current.full_time_time)) + TILT_TIME_OFFSET
             self.set_step_time(step_time)
             command = SUNBLIND_COMMANDS.STEP_DOWN if diff > 0 else SUNBLIND_COMMANDS.STEP_UP
             self.set_command(command)
@@ -75,6 +82,13 @@ class SunblindAPI(StatefulAPI[SunblindState]):
     def set_position(self, position: int):
         if position < 0 or position > SUNBLIND_EXTENDED:
             raise ValueError(f"Position must be between 0 and {SUNBLIND_EXTENDED}")
+
+        # use generic commands
+        if position == 0:
+            self.set_command(SUNBLIND_COMMANDS.UP)
+
+        if position == SUNBLIND_EXTENDED:
+            self.set_command(SUNBLIND_COMMANDS.DOWN)
 
         self.set_command(SUNBLIND_COMMANDS.STOP)
         current = self.get_update()
@@ -85,9 +99,9 @@ class SunblindAPI(StatefulAPI[SunblindState]):
             step_time = (
                 abs(
                     int(diff / SUNBLIND_EXTENDED * current.move_time * MOVE_TIME_UNITS)
-                    + int(tilt_diff / SUNBLIND_TILT_CLOSED * current.tilt_time)
+                    + int(tilt_diff / SUNBLIND_TILT_CLOSED * current.full_time_time)
                 )
-                + current.move_time
+                + TILT_TIME_OFFSET
             )
             self.set_step_time(step_time)
             command = SUNBLIND_COMMANDS.STEP_DOWN if diff > 0 else SUNBLIND_COMMANDS.STEP_UP
