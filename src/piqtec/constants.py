@@ -177,14 +177,14 @@ class SUNBLIND_VARS(StrEnum):
     step_dn = "StepDN"
     step_up = "StepUP"
     calendar_en = "CalendarEN"
-    move_time = "MoveTime"
-    reverse_time = "ReverseTime"
+    move_time = "MoveTime"  # tracks position
+    reverse_time = "ReverseTime"  # waiting between changes of a direction
     tilt_time = "TiltTime"
     short_down_time = "ShortDownTime"
     step_time = "StepTime"
-    full_time_time = "FullTimeTime"
+    full_time_time = "FullTimeTime"  # tracks tilt
     name = "Name"
-    dead_time = "DeadTime"
+    dead_time = "DeadTime"  # added to every movement
     state = "State"
     rotation = "Rotation"
     position = "Position"
@@ -193,9 +193,9 @@ class SUNBLIND_VARS(StrEnum):
 
 
 class SUNBLIND_COMMANDS(IntEnum):
-    UP = 0  # move_time
-    DOWN = 1  # move_time
-    DOWN_TILT = 2  # move_time + reverse_time + tilt_time
+    UP = 0  # move_time # forces position and rotation to 0
+    DOWN = 1  # move_time # forces position and rotation to max
+    DOWN_TILT = 2  # move_time + reverse_time (waiting) + tilt_time
     STOP = 3
     TILT_OPEN = 4  # short_down_tim + reverse_time + tilt_time
     STEP_UP = 5  # step_time
@@ -209,3 +209,4 @@ SUNBLIND_TILT_CLOSED = 180
 SUNBLIND_EXTENDED = 1000
 
 MOVE_TIME_UNITS = 1000
+TILT_TIME_OFFSET = 25
