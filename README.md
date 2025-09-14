@@ -13,7 +13,7 @@ your mileage may vary.
 ## Usage
 
 ```python
-from piqtec.system import Controller
+from piqtec.controller import Controller
 
 c = Controller("controller_ip_or_hostname:port")
 state = c.update_status()

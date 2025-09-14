@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from ..constants import (
     MOVE_TIME_UNITS,
@@ -10,10 +9,7 @@ from ..constants import (
     TILT_TIME_OFFSET,
 )
 from ..utils import CoerceTypesMixin
-from .generic import StatefulAPI
-
-if TYPE_CHECKING:
-    pass
+from .base import StatefulUnit
 
 
 @dataclass
@@ -49,7 +45,7 @@ class SunblindState(CoerceTypesMixin):
     state2: int
 
 
-class SunblindAPI(StatefulAPI[SunblindState]):
+class Sunblind(StatefulUnit[SunblindState]):
     @classmethod
     def _var_map(cls):
         return SUNBLIND_VARS
@@ -59,11 +55,11 @@ class SunblindAPI(StatefulAPI[SunblindState]):
         return SunblindState
 
     def set_command(self, command: int):
-        r = self.drivers["command"].set_request(str(command))
+        r = self.apis["command"].set_request(str(command))
         self._controller.api_call(r)
 
     def set_step_time(self, step_time: int):
-        r = self.drivers["step_time"].set_request(str(step_time))
+        r = self.apis["step_time"].set_request(str(step_time))
         self._controller.api_call(r)
 
     def set_rotation(self, rotation: int):
@@ -71,7 +67,7 @@ class SunblindAPI(StatefulAPI[SunblindState]):
             raise ValueError(f"Rotation must be between 0 and {SUNBLIND_TILT_CLOSED}")
 
         self.set_command(SUNBLIND_COMMANDS.STOP)
-        current = self.get_update()
+        current = self.do_update()
         if current.rotation != rotation:
             diff = float(rotation - current.rotation)
             step_time = abs(int(diff / SUNBLIND_TILT_CLOSED * current.full_time_time)) + TILT_TIME_OFFSET
@@ -91,7 +87,7 @@ class SunblindAPI(StatefulAPI[SunblindState]):
             self.set_command(SUNBLIND_COMMANDS.DOWN)
 
         self.set_command(SUNBLIND_COMMANDS.STOP)
-        current = self.get_update()
+        current = self.do_update()
         if current.position != position:
             diff = float(position - current.position)
             tilt_target = SUNBLIND_TILT_CLOSED if diff > 0 else 0

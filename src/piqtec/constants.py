@@ -16,6 +16,10 @@ DEVICE_PREFIX = "5"
 class REGEXP:
     ROOM = r"^R\d{1,2}$"
     SUNBLIND = r"\w{0,}\_SUNBLIND\w{0,}"
+    CALENDAR = r"_CALENDAR_\d{2}$"
+
+
+FAILURE_VAR = "_Failure"
 
 
 class SYSTEM_VARS(StrEnum):
@@ -157,7 +161,16 @@ class ROOM_VARS(StrEnum):
 
 class ROOM_MODES(IntEnum):
     CALENDAR = 0
+    ANTIFREEZE = 1
+    HOLIDAY = 2
     OFF = 3
+
+
+class ROOM_CORR_MODES(IntEnum):
+    NONE = 0
+    DAY = 1
+    NIGHT = 2
+    MANUAL = 3
 
 
 class SUNBLIND_VARS(StrEnum):

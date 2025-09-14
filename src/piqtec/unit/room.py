@@ -3,7 +3,7 @@ from dataclasses import dataclass
 
 from ..constants import ROOM_VARS
 from ..utils import CoerceTypesMixin
-from .generic import StatefulAPI
+from .base import StatefulUnit
 
 
 @dataclass
@@ -57,7 +57,7 @@ class RoomState(CoerceTypesMixin):
             self.requested_temperature = float(self.requested_temperature)
 
 
-class RoomAPI(StatefulAPI[RoomState]):
+class Room(StatefulUnit[RoomState]):
     @classmethod
     def _var_map(cls):
         return ROOM_VARS
@@ -65,3 +65,24 @@ class RoomAPI(StatefulAPI[RoomState]):
     @classmethod
     def _state_cls(cls):
         return RoomState
+
+    def set_room_mode(self, room_mode: int):
+        r = self.apis["room_mode"].set_request(str(room_mode))
+        self._controller.api_call(r)
+
+    def set_correction_mode(self, correction_mode: int):
+        r = self.apis["correction_status"].set_request(str(correction_mode))
+        self._controller.api_call(r)
+
+    def set_correction_time(self, correction_time: int):
+        """Set correction time in 5-minute intervals."""
+        r = self.apis["correction_time"].set_request(str(correction_time))
+        self._controller.api_call(r)
+
+    def set_correction_temperature(self, correction_temperature: float):
+        r = self.apis["correction_temperature"].set_request(str(correction_temperature))
+        self._controller.api_call(r)
+
+    def set_calendar(self, calendar_number: int):
+        r = self.apis["calendar_number"].set_request(str(calendar_number))
+        self._controller.api_call(r)

@@ -1,9 +1,10 @@
 import contextlib
+import re
 from dataclasses import dataclass, fields
 
 from .api.generic import API, CalendarAPI, DeviceAPI, DriverAPI, PageAPI, ScenarioAPI
 from .constants import MAX_RESPONSE_LENGTH
-from .type_helpers import Get
+from .type_helpers import Get, RequestSet
 
 
 @dataclass
@@ -68,7 +69,7 @@ def match_api(obj: dict[str, str]) -> API:
                 structure_id=int(rest.get("structure_id")),
                 offset=int(rest.get("offset")),
                 mask=int(m) if m else None,
-                calendar_type=rest.get("history", None),
+                calendar_type=rest.get("calendarType", None),
             )
         case {"category": "device", **rest}:
             m = rest.get("mask", None)
@@ -102,3 +103,28 @@ def match_api(obj: dict[str, str]) -> API:
             )
         case _:
             raise NotImplementedError(f"Cannot parse driver {obj}")
+
+
+def merge_requests(request_sets: list[RequestSet]) -> RequestSet:
+    getters = []
+    for rs in request_sets:
+        getters.extend(rs.getters)
+    return RequestSet(getters=getters)
+
+
+def find_ids(apis: dict[str, API], regex: str) -> list[str]:
+    ids = set()
+    for n in apis:
+        prefix = n.split(".")[0]
+        if re.match(regex, prefix):
+            ids.add(prefix)
+    return sorted(ids)
+
+
+def find_elems(apis: dict[str, API], regex: str) -> list[str]:
+    elems = set()
+    for n in apis:
+        prefix = n.split(".")[0]
+        if re.match(regex, prefix):
+            elems.add(n)
+    return sorted(elems)
