@@ -11,7 +11,6 @@ if TYPE_CHECKING:
 
 @dataclass
 class DeviceState:
-    failure: bool
     sensors: dict[str, str]
     switches: dict[str, str]
 
@@ -56,7 +55,7 @@ class Device:
     def parse_state(self, response_set: ResponseSet):
         sensors = {n: a.parse(response_set) for n, a in self.sensor_apis.items()}
         switches = {n: a.parse(response_set) for n, a in self.switch_apis.items()}
-        return DeviceState(failure=False, sensors=sensors, switches=switches)
+        return DeviceState(sensors=sensors, switches=switches)
 
     def do_update(self):
         resp = self._controller.api_call(self.get_request)

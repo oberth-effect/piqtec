@@ -1,17 +1,5 @@
-import time
-
-from src.piqtec.system import Controller
+from src.piqtec.controller import Controller
 
 c = Controller("iqtec.home")
-b = c.sunblinds["R4_SUNBLIND_1"]
-
-print(c.update_status())
-
-# print(s := b.get_update())
-#
-# print(s.position, s.rotation)
-#
-# # b.set_position(0)
-time.sleep(5)
-# print(e := b.get_update())
-# print(e.position, e.rotation)
+# print(list(x.do_update() for x in c.calendars.values()))
+print(c.system.do_update())
