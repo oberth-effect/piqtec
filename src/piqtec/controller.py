@@ -169,7 +169,7 @@ class Controller:
         get_rooms = reduce(lambda x, y: x + y, (r.get_request for r in self.rooms.values()))
         get_sunblinds = reduce(lambda x, y: x + y, (r.get_request for r in self.sunblinds.values()))
         get_devices = reduce(lambda x, y: x + y, (r.get_request for r in self.devices.values()))
-        request = get_system + get_rooms + get_sunblinds
+        request = get_system + get_rooms + get_sunblinds + get_devices
         response = self.api_call(request)
         return State(
             system=self.system.parse_state(response),
