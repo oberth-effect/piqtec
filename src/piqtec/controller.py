@@ -8,7 +8,7 @@ from .api.generic import API, CalendarAPI, DeviceAPI, DriverAPI, PageAPI
 from .constants import API_PATH, REGEXP, XML_PATH
 from .type_helpers import RequestSet, Response, ResponseSet
 from .unit.calendar import Calendar
-from .unit.device import Device
+from .unit.device import Device, DeviceState
 from .unit.room import Room, RoomState
 from .unit.sunblind import Sunblind, SunblindState
 from .unit.system import System, SystemState
@@ -29,6 +29,7 @@ class State:
     system: SystemState
     rooms: dict[str, RoomState]
     sunblinds: dict[str, SunblindState]
+    devices: dict[str, DeviceState]
 
 
 class Controller:
@@ -167,12 +168,14 @@ class Controller:
         get_system = self.system.get_request
         get_rooms = reduce(lambda x, y: x + y, (r.get_request for r in self.rooms.values()))
         get_sunblinds = reduce(lambda x, y: x + y, (r.get_request for r in self.sunblinds.values()))
+        get_devices = reduce(lambda x, y: x + y, (r.get_request for r in self.devices.values()))
         request = get_system + get_rooms + get_sunblinds
         response = self.api_call(request)
         return State(
             system=self.system.parse_state(response),
             rooms={r_id: r.parse_state(response) for r_id, r in self.rooms.items()},
             sunblinds={s_id: s.parse_state(response) for s_id, s in self.sunblinds.items()},
+            devices={d_id: d.parse_state(response) for d_id, d in self.devices.items()},
         )
 
     def get_calendar_names(self):
