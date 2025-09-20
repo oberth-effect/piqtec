@@ -1,8 +1,11 @@
 {
   lib,
   buildPythonPackage,
-  requests
+  fetchPypi,
+  requests,
+  uv-build,
 }:
+
 
 buildPythonPackage rec {
   pname = "piqtec";
@@ -17,6 +20,9 @@ buildPythonPackage rec {
     requests
   ];
 
+  build-system = [
+    uv-build
+  ];
 
   meta = with lib; {
     description = "IQtec smart-home Python inteface";
