@@ -90,7 +90,7 @@ class Controller:
         # Setup (generic) Devices
         all_prefixes = {idx.split(".")[0] for idx in self._driapis_by_name}
         unused_prefixes = all_prefixes - set(self._room_ids) - set(self._sunblind_ids)
-        unused_prefixes.remove("SYSTEM")
+        # unused_prefixes.remove("SYSTEM") # Add SYSTEM to generic Device list as well
         self._device_ids = list(unused_prefixes)
         self._create_devices()
 
