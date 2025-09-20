@@ -1,6 +1,6 @@
 # Piqtec: An IQtec smart-home Python inteface
 
-[![CC BY-NC-SA 4.0][cc-by-nc-sa-shield]][cc-by-nc-sa]
+[![CC BY-NC-SA 4.0][cc-by-nc-sa-shield]][cc-by-nc-sa] ![PyPI - Version](https://img.shields.io/pypi/v/piqtec)
 
 This is a WIP implementation of Python interface to the IQtec / Kobra smart home solutions.
 (IQtec is a small smart-home vendor based in the Czech Republic.)
