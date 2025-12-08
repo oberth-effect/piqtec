@@ -4,7 +4,7 @@ MAX_RESPONSE_LENGTH = 100
 
 API_PATH = "/control/?"
 
-XML_PATH = "/proj/"
+XML_PATH = "/proj/data.xml"
 
 DRIVER_PREFIX = "1"
 
