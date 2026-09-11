@@ -1,6 +1,6 @@
 [project]
 name = "piqtec"
-version = "0.3.0"
+version = "0.4.0"
 description = "A Python interface to the IQtec / Kobra smart home solutions."
 readme = "README.md"
 license = "CC-BY-NC-SA-4.0"
@@ -21,6 +21,7 @@ build-backend = "uv_build"
 dev = [
     "pytest>=9.1.1",
     "ruff>=0.12.5",
+    "tzdata>=2026.3",
 ]
 
 [tool.ruff]
