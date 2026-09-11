@@ -93,6 +93,21 @@ Times are counted in 5 minute steps from midnight, so a day spans 0..288. The
 first transition is pinned to midnight, the final edge only terminates the day,
 and a day therefore holds between 1 and 7 transitions.
 
+`CalendarState.periods()` projects the weekly pattern onto real dates, resolving
+"follows Monday", merging a period that runs past midnight, and keeping
+wall-clock times across a daylight-saving change:
+
+```python
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+monday = datetime(2026, 9, 14, tzinfo=ZoneInfo("Europe/Prague"))
+for period in state.periods(monday, monday + timedelta(days=1)):
+    print(period.start, period.end, CalendarLevel(period.level).name)
+```
+
+Day 7 is never dated: the controller selects it through an input, not a weekday.
+
 ## Notes on the protocol
 
 The controller's HTTP interface has two hard limits, both of which fail *silently*:
