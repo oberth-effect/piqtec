@@ -1,6 +1,8 @@
 """Tests for the calendar model."""
 
 import json
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -227,3 +229,79 @@ class TestCalendarType:
     def test_type_is_carried_through(self):
         state = CalendarState.from_json(SAMPLE, CalendarType.BLIND)
         assert state.calendar_type is CalendarType.BLIND
+
+
+class TestPeriods:
+    TZ = ZoneInfo("Europe/Prague")
+    MONDAY = datetime(2026, 9, 14, tzinfo=TZ)
+
+    def test_periods_are_contiguous(self):
+        periods = sample().periods(self.MONDAY, self.MONDAY + timedelta(days=7))
+        assert all(a.end == b.start for a, b in zip(periods, periods[1:], strict=False))
+
+    def test_periods_cover_the_whole_window(self):
+        end = self.MONDAY + timedelta(days=3)
+        periods = sample().periods(self.MONDAY, end)
+        assert periods[0].start <= self.MONDAY
+        assert periods[-1].end >= end
+
+    def test_no_empty_periods(self):
+        periods = sample().periods(self.MONDAY, self.MONDAY + timedelta(days=7))
+        assert all(p.end > p.start for p in periods)
+
+    def test_a_period_is_merged_across_midnight(self):
+        # The sample ends every day on NIGHT and opens the next on NIGHT.
+        periods = sample().periods(self.MONDAY, self.MONDAY + timedelta(days=2))
+        overnight = [p for p in periods if p.start.date() != p.end.date()]
+        assert overnight, "an evening period must run into the next morning"
+        assert all(p.level == CalendarLevel.NIGHT for p in overnight)
+
+    def test_levels_follow_the_schedule(self):
+        periods = sample().periods(self.MONDAY, self.MONDAY + timedelta(days=1))
+        inside = [p for p in periods if p.start.date() == self.MONDAY.date()]
+        assert [(f"{p.start:%H:%M}", p.level) for p in inside] == [
+            ("06:00", 2),
+            ("09:55", 1),
+            ("15:10", 2),
+            ("20:00", 1),
+        ]
+
+    def test_as_monday_resolves_to_monday(self):
+        state = sample()
+        state.days[2].as_monday = True
+        state.days[2].set_transitions([CalendarEdge(0, 0)])  # would be all-Nobody on its own
+        wednesday = state.day_for_weekday(2)
+        assert [e.time for e in wednesday.transitions] == [e.time for e in state.days[0].transitions]
+
+    def test_a_day_of_its_own_is_kept(self):
+        state = sample()
+        state.days[5].as_monday = False
+        state.days[5].set_transitions([CalendarEdge(0, 0), CalendarEdge(120, 2)])
+        assert [e.time for e in state.day_for_weekday(5).transitions] == [0, 120]
+
+    def test_day_eight_is_never_dated(self):
+        state = sample()
+        state.days[7].set_transitions([CalendarEdge(0, 0)])
+        periods = state.periods(self.MONDAY, self.MONDAY + timedelta(days=7))
+        assert all(p.level != 0 for p in periods), "day 8 must not reach the week"
+
+    def test_a_single_transition_day_is_one_period(self):
+        state = sample()
+        for day in state.days:
+            day.as_monday = False
+            day.set_transitions([CalendarEdge(0, 2)])
+        periods = state.periods(self.MONDAY, self.MONDAY + timedelta(days=3))
+        assert len(periods) == 1
+        assert periods[0].level == 2
+
+    def test_wall_clock_times_survive_a_dst_change(self):
+        # 2026-03-29 is the European spring forward, 02:00 -> 03:00.
+        start = datetime(2026, 3, 28, tzinfo=self.TZ)
+        periods = sample().periods(start, start + timedelta(days=2))
+        starts = {f"{p.start:%H:%M}" for p in periods}
+        assert starts <= {"06:00", "09:55", "15:10", "20:00"}
+        assert all(p.end > p.start for p in periods)
+
+    def test_the_time_zone_of_the_window_is_used(self):
+        periods = sample().periods(self.MONDAY, self.MONDAY + timedelta(days=1))
+        assert all(p.start.tzinfo is self.TZ for p in periods)
