@@ -2,7 +2,7 @@
 
 import pytest
 
-from piqtec.api.generic import CalendarAPI, DeviceAPI, DriverAPI, decode_value
+from piqtec.api.generic import CalendarAPI, DeviceAPI, DriverAPI, ScenarioAPI, decode_value
 from piqtec.constants import MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES
 from piqtec.controller import parse_responses
 from piqtec.exceptions import IQtecError, ReadOnlyVariableError, RequestTooLongError
@@ -173,3 +173,39 @@ class TestNameLookup:
 
     def test_find_names_does_not_treat_the_id_as_a_pattern(self):
         assert find_names(["A.B", "A+B.C"], "A+B") == ["A+B.C"]
+
+
+class TestMaskZero:
+    """Scenario records use the fourth path component as a field index, so a
+    mask of 0 is meaningful and must not be dropped."""
+
+    def test_mask_zero_is_kept(self):
+        api = ScenarioAPI(
+            name="_sbScenario_00_name", access="US", param=False, typ="string16", structure_id=1, offset=0, mask=0
+        )
+        assert api.address == "8/1/0/0"
+
+    def test_absent_mask_is_omitted(self):
+        assert driver(structure_id=1, offset=0, mask=None).address == "1/1/0"
+
+    def test_device_keeps_mask_zero(self):
+        api = DeviceAPI(
+            name="D.X", access="US", param=False, typ="short", device_id=1, device_structure_id=7, offset=2, mask=0
+        )
+        assert api.address == "5/7/2/0"
+
+    def test_match_api_reads_a_zero_mask(self):
+        api = match_api(
+            {
+                "name": "_sbScenario_00_name",
+                "category": "sbScenario",
+                "type": "string16",
+                "access": "US",
+                "param": "0",
+                "structure_id": "1",
+                "offset": "0",
+                "mask": "0",
+            }
+        )
+        assert api.mask == 0
+        assert api.address == "8/1/0/0"

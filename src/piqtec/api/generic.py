@@ -59,10 +59,12 @@ class API(ABC):
 
     @property
     def readonly(self) -> bool:
-        """Whether the controller advertises this variable as writable.
+        """Whether a *user* may write this variable.
 
-        The OEM web application ignores the access attribute entirely, so this is
-        a heuristic: an upper-case "U" appears to mark user-writable variables.
+        The access letters name the three roles, upper case for write and lower
+        for read: P projectant, U user, S service. Only the user role is assumed
+        here, so variables writable solely by a projectant or by service read as
+        read-only.
         """
         return "U" not in self.access
 
@@ -109,7 +111,9 @@ class _AddressedAPI(API):
     @property
     def address(self) -> str:
         base = f"{self.prefix}/{self.structure_id}/{self.offset}"
-        return f"{base}/{self.mask}" if self.mask else base
+        # 0 is a real mask: scenario records use it as a field index, and
+        # dropping it would read the whole row instead of one variable.
+        return base if self.mask is None else f"{base}/{self.mask}"
 
     @property
     def structure_address(self) -> str:
@@ -145,7 +149,7 @@ class DeviceAPI(API):
     @property
     def address(self) -> str:
         base = f"{DEVICE_PREFIX}/{self.device_structure_id}/{self.offset}"
-        return f"{base}/{self.mask}" if self.mask else base
+        return base if self.mask is None else f"{base}/{self.mask}"
 
     @property
     def structure_address(self) -> str:

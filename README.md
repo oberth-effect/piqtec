@@ -128,9 +128,11 @@ Values are decoded according to the `type` attribute of `data.xml`. Variables th
 controller cannot currently supply come back as `"!off"` and are decoded to
 `None`, as are variables absent from a given installation.
 
-The `access` attribute is interpreted as a heuristic — an upper-case `U` marks a
-writable variable. The OEM web application ignores the attribute entirely, so
-this is an informed guess rather than a documented rule.
+The `access` attribute names three roles, upper case for write and lower case for
+read: `P` projectant, `U` user, `S` service. This package assumes the user role,
+so a variable writable only by a projectant or by service (`PS`, `Ps`, `S`) is
+treated as read-only even though the control interface itself has no
+authentication and would very likely accept the write.
 
 ## Versioning
 
