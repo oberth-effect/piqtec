@@ -1,9 +1,11 @@
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+"""Generic devices discovered from data.xml on a best-effort basis."""
+
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from ..api.generic import DriverAPI
 from ..type_helpers import Get, RequestSet, ResponseSet
-from ..utils import find_elems
+from ..utils import find_names, merge_requests
 
 if TYPE_CHECKING:
     from ..controller import Controller
@@ -11,52 +13,59 @@ if TYPE_CHECKING:
 
 @dataclass
 class DeviceState:
-    sensors: dict[str, str]
-    switches: dict[str, str]
+    sensors: dict[str, Any] = field(default_factory=dict)
+    switches: dict[str, Any] = field(default_factory=dict)
 
 
 class Device:
+    """Every variable sharing a name prefix, split by writability."""
+
     idx: str
     sensor_apis: dict[str, DriverAPI]
     switch_apis: dict[str, DriverAPI]
 
-    _url: str
+    _address: str | None
     _controller: "Controller"
 
-    def __init__(self, controller: "Controller", idx: str, apis: dict[str, DriverAPI]):
+    def __init__(self, controller: "Controller", idx: str, apis: dict[str, DriverAPI]) -> None:
         self._controller = controller
         self.idx = idx
-        api_ids = find_elems(apis, rf"^{idx}$")
 
         self.sensor_apis = {}
         self.switch_apis = {}
+        for name in find_names(apis, idx):
+            api = apis[name]
+            target = self.sensor_apis if api.readonly else self.switch_apis
+            target[name] = api
 
-        for x in api_ids:
-            d = apis.get(x)
-            if d:
-                if d.readonly:
-                    self.sensor_apis[d.name] = d
-                else:
-                    self.switch_apis[d.name] = d
+        addresses = {api.structure_address for api in self.all_apis.values()}
+        self._address = addresses.pop() if len(addresses) == 1 else None
 
-        if self.sensor_apis:
-            self._url = list(self.sensor_apis.values())[0].structure_url
-        elif self.switch_apis:
-            self._url = list(self.switch_apis.values())[0].structure_url
+    @property
+    def all_apis(self) -> dict[str, DriverAPI]:
+        return {**self.sensor_apis, **self.switch_apis}
+
+    @property
+    def available(self) -> bool:
+        return bool(self.sensor_apis or self.switch_apis)
 
     @property
     def get_request(self) -> RequestSet:
-        if self._url:
-            get_request = Get(path=self._url, expected_length=len(self.sensor_apis) + len(self.switch_apis))
-            return RequestSet(getters=[get_request])
-        else:
-            return RequestSet()  # fail silently
+        if self._address:
+            return RequestSet(getters=[Get(path=self._address)])
+        return merge_requests(api.get_request() for api in self.all_apis.values())
 
-    def parse_state(self, response_set: ResponseSet):
-        sensors = {n: a.parse(response_set) for n, a in self.sensor_apis.items()}
-        switches = {n: a.parse(response_set) for n, a in self.switch_apis.items()}
-        return DeviceState(sensors=sensors, switches=switches)
+    def parse_state(self, response_set: ResponseSet) -> DeviceState:
+        return DeviceState(
+            sensors={name: api.parse(response_set) for name, api in self.sensor_apis.items()},
+            switches={name: api.parse(response_set) for name, api in self.switch_apis.items()},
+        )
 
-    def do_update(self):
-        resp = self._controller.api_call(self.get_request)
-        return self.parse_state(resp)
+    def update(self) -> DeviceState:
+        return self.parse_state(self._controller.api_call(self.get_request))
+
+    def set_value(self, name: str, value: Any) -> None:
+        api = self.switch_apis.get(name)
+        if api is None:
+            raise KeyError(f"{self.idx} has no writable variable {name!r}")
+        self._controller.api_call(api.set_request(value))

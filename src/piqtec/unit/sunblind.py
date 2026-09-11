@@ -1,104 +1,111 @@
+"""Sunblind / window cover control."""
+
 from dataclasses import dataclass
 
 from ..constants import (
     MOVE_TIME_UNITS,
-    SUNBLIND_COMMANDS,
     SUNBLIND_EXTENDED,
     SUNBLIND_TILT_CLOSED,
-    SUNBLIND_VARS,
     TILT_TIME_OFFSET,
+    SunblindCommand,
+    SunblindVar,
 )
-from ..utils import CoerceTypesMixin
 from .base import StatefulUnit
 
 
 @dataclass
-class SunblindState(CoerceTypesMixin):
-    failure: bool
-    out_up_1: bool
-    out_up_2: bool
-    out_dn_1: bool
-    out_dn_2: bool
-    manual_up: bool
-    manual_dn: bool
-    en: bool
-    dis: bool
-    urgent_up: bool
-    sun_dn: bool
-    dn: bool
-    up: bool
-    step_dn: bool
-    step_up: bool
-    calendar_en: bool
-    move_time: int
-    reverse_time: int
-    tilt_time: int
-    short_down_time: int
-    step_time: int
-    full_time_time: int
-    name: str
-    dead_time: int
-    state: int
-    rotation: int
-    position: int
-    command: int
-    state2: int
+class SunblindState:
+    failure: bool | None = None
+    out_up_1: bool | None = None
+    out_up_2: bool | None = None
+    out_dn_1: bool | None = None
+    out_dn_2: bool | None = None
+    manual_up: bool | None = None
+    manual_dn: bool | None = None
+    en: bool | None = None
+    dis: bool | None = None
+    urgent_up: bool | None = None
+    sun_dn: bool | None = None
+    dn: bool | None = None
+    up: bool | None = None
+    step_dn: bool | None = None
+    step_up: bool | None = None
+    calendar_en: bool | None = None
+    move_time: int | None = None
+    reverse_time: int | None = None
+    tilt_time: int | None = None
+    short_down_time: int | None = None
+    step_time: int | None = None
+    full_time_time: int | None = None
+    name: str | None = None
+    dead_time: int | None = None
+    state: int | None = None
+    rotation: int | None = None
+    position: int | None = None
+    command: int | None = None
+    state2: int | None = None
 
 
 class Sunblind(StatefulUnit[SunblindState]):
     @classmethod
-    def _var_map(cls):
-        return SUNBLIND_VARS
+    def _var_map(cls) -> type[SunblindVar]:
+        return SunblindVar
 
     @classmethod
-    def _state_cls(cls):
+    def _state_cls(cls) -> type[SunblindState]:
         return SunblindState
 
-    def set_command(self, command: int):
-        r = self.apis["command"].set_request(str(command))
-        self._controller.api_call(r)
+    def set_command(self, command: SunblindCommand) -> None:
+        self.set_value("command", int(command))
 
-    def set_step_time(self, step_time: int):
-        r = self.apis["step_time"].set_request(str(step_time))
-        self._controller.api_call(r)
+    def set_step_time(self, step_time: int) -> None:
+        self.set_value("step_time", step_time)
 
-    def set_rotation(self, rotation: int):
-        if rotation < 0 or rotation > SUNBLIND_TILT_CLOSED:
+    def _step(self, step_time: int, command: SunblindCommand) -> None:
+        """Move for a measured time; both writes go out in one request."""
+        request = self.apis["step_time"].set_request(step_time) + self.apis["command"].set_request(int(command))
+        self._controller.api_call(request)
+
+    def set_rotation(self, rotation: int) -> None:
+        if not 0 <= rotation <= SUNBLIND_TILT_CLOSED:
             raise ValueError(f"Rotation must be between 0 and {SUNBLIND_TILT_CLOSED}")
 
-        self.set_command(SUNBLIND_COMMANDS.STOP)
-        current = self.do_update()
-        if current.rotation != rotation:
-            diff = float(rotation - current.rotation)
-            step_time = abs(int(diff / SUNBLIND_TILT_CLOSED * current.full_time_time)) + TILT_TIME_OFFSET
-            self.set_step_time(step_time)
-            command = SUNBLIND_COMMANDS.STEP_DOWN if diff > 0 else SUNBLIND_COMMANDS.STEP_UP
-            self.set_command(command)
+        self.set_command(SunblindCommand.STOP)
+        current = self.update()
+        if current.rotation is None or current.full_time_time is None or current.rotation == rotation:
+            return
 
-    def set_position(self, position: int):
-        if position < 0 or position > SUNBLIND_EXTENDED:
+        diff = float(rotation - current.rotation)
+        step_time = abs(int(diff / SUNBLIND_TILT_CLOSED * current.full_time_time)) + TILT_TIME_OFFSET
+        command = SunblindCommand.STEP_DOWN if diff > 0 else SunblindCommand.STEP_UP
+        self._step(step_time, command)
+
+    def set_position(self, position: int) -> None:
+        if not 0 <= position <= SUNBLIND_EXTENDED:
             raise ValueError(f"Position must be between 0 and {SUNBLIND_EXTENDED}")
 
-        # use generic commands
+        # The endpoints have dedicated commands that also normalise the tilt.
         if position == 0:
-            self.set_command(SUNBLIND_COMMANDS.UP)
-
+            self.set_command(SunblindCommand.UP)
+            return
         if position == SUNBLIND_EXTENDED:
-            self.set_command(SUNBLIND_COMMANDS.DOWN)
+            self.set_command(SunblindCommand.DOWN)
+            return
 
-        self.set_command(SUNBLIND_COMMANDS.STOP)
-        current = self.do_update()
-        if current.position != position:
-            diff = float(position - current.position)
-            tilt_target = SUNBLIND_TILT_CLOSED if diff > 0 else 0
-            tilt_diff = float(tilt_target - current.rotation)
-            step_time = (
-                abs(
-                    int(diff / SUNBLIND_EXTENDED * current.move_time * MOVE_TIME_UNITS)
-                    + int(tilt_diff / SUNBLIND_TILT_CLOSED * current.full_time_time)
-                )
-                + TILT_TIME_OFFSET
+        self.set_command(SunblindCommand.STOP)
+        current = self.update()
+        if current.position is None or current.move_time is None or current.position == position:
+            return
+
+        diff = float(position - current.position)
+        tilt_target = SUNBLIND_TILT_CLOSED if diff > 0 else 0
+        tilt_diff = float(tilt_target - (current.rotation or 0))
+        step_time = (
+            abs(
+                int(diff / SUNBLIND_EXTENDED * current.move_time * MOVE_TIME_UNITS)
+                + int(tilt_diff / SUNBLIND_TILT_CLOSED * (current.full_time_time or 0))
             )
-            self.set_step_time(step_time)
-            command = SUNBLIND_COMMANDS.STEP_DOWN if diff > 0 else SUNBLIND_COMMANDS.STEP_UP
-            self.set_command(command)
+            + TILT_TIME_OFFSET
+        )
+        command = SunblindCommand.STEP_DOWN if diff > 0 else SunblindCommand.STEP_UP
+        self._step(step_time, command)

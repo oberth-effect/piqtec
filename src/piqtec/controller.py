@@ -1,186 +1,244 @@
-from dataclasses import dataclass
-from functools import reduce
+"""Connection to an IQtec / Kobra controller."""
+
+import logging
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from urllib.parse import quote
 from xml.etree import ElementTree
 
 import requests
 
 from .api.generic import API, CalendarAPI, DeviceAPI, DriverAPI, PageAPI
-from .constants import API_PATH, REGEXP, XML_PATH
-from .type_helpers import RequestSet, Response, ResponseSet
-from .unit.calendar import Calendar
+from .constants import (
+    API_PATH,
+    DEFAULT_ENCODING,
+    DEFAULT_TIMEOUT,
+    DEFAULT_VALUE_BYTES,
+    MAX_REQUEST_BYTES,
+    MAX_RESPONSE_BYTES,
+    REGEXP,
+    XML_PATH,
+)
+from .exceptions import InvalidValueError, IQtecConnectionError, IQtecResponseError
+from .type_helpers import Get, RequestSet, Response, ResponseSet, Set
+from .unit.calendar import Calendar, CalendarState
 from .unit.device import Device, DeviceState
 from .unit.room import Room, RoomState
 from .unit.sunblind import Sunblind, SunblindState
 from .unit.system import System, SystemState
-from .utils import find_ids, match_api, split_getters_to_chunks
+from .utils import find_ids, match_api, pack_chunks, unit_prefix
+
+_LOGGER = logging.getLogger(__name__)
+
+# Replies are cut off at 4092 bytes without any error; anything close to that
+# means the budgeting was wrong and values are missing.
+_TRUNCATION_WARNING_BYTES = 4000
 
 
-def parse_responses(r: str) -> ResponseSet:
-    lines = r.splitlines()
-    responses = [Response(*line.split("=")) for line in lines]
-    response_set = {}
-    for r in responses:
-        response_set[r.path] = r
+def parse_responses(payload: str) -> ResponseSet:
+    """Parse a ``path=value`` reply body, tolerating odd lines and values."""
+    response_set: ResponseSet = {}
+    for line in payload.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        path, separator, value = line.partition("=")
+        if not separator:
+            _LOGGER.debug("Ignoring malformed response line %r", line)
+            continue
+        response_set[path] = Response(path=path, value=value)
     return response_set
 
 
 @dataclass
 class State:
-    system: SystemState
-    rooms: dict[str, RoomState]
-    sunblinds: dict[str, SunblindState]
-    devices: dict[str, DeviceState]
+    system: SystemState = field(default_factory=SystemState)
+    rooms: dict[str, RoomState] = field(default_factory=dict)
+    sunblinds: dict[str, SunblindState] = field(default_factory=dict)
+    devices: dict[str, DeviceState] = field(default_factory=dict)
 
 
 class Controller:
+    """Reads and writes the controller's variables over its HTTP interface."""
+
     name: str
+    host: str
     encoding: str
+    timeout: float
 
-    _url: str
-    _room_ids: list[str]
-    _sunblind_ids: list[str]
-    _calendar_ids: list[str]
-    _device_ids: list[str]
-
-    # Units
     system: System
     rooms: dict[str, Room]
     sunblinds: dict[str, Sunblind]
     calendars: dict[str, Calendar]
     devices: dict[str, Device]
 
-    # APIs
-    _driapis_by_name: dict[str, DriverAPI]
-    _devapis_by_name: dict[str, DeviceAPI]
-    _pagapis_by_name: dict[str, PageAPI]
-    _calapis_by_name: dict[str, CalendarAPI]
-
-    def __init__(self, host: str, name: str = "IQtec Controller", proto: str = "http", encoding: str = "Windows-1250"):
-        self._url = f"{proto}://{host}"
+    def __init__(
+        self,
+        host: str,
+        name: str = "IQtec Controller",
+        proto: str = "http",
+        encoding: str = DEFAULT_ENCODING,
+        timeout: float = DEFAULT_TIMEOUT,
+    ) -> None:
+        self.host = host
         self.name = name
         self.encoding = encoding
+        self.timeout = timeout
+        self._base_url = f"{proto}://{host}"
+        self._session = requests.Session()
 
-        # Connect to the Device and set up apis
         apis = self._get_apis()
-        self._driapis_by_name = {}
-        self._devapis_by_name = {}
-        self._pagapis_by_name = {}
-        self._calapis_by_name = {}
+        self._driver_apis: dict[str, DriverAPI] = {}
+        self._device_apis: dict[str, DeviceAPI] = {}
+        self._page_apis: dict[str, PageAPI] = {}
+        self._calendar_apis: dict[str, CalendarAPI] = {}
         for api in apis:
             match api:
                 case DriverAPI():
-                    self._driapis_by_name[api.name] = api
+                    self._driver_apis[api.name] = api
                 case DeviceAPI():
-                    self._devapis_by_name[api.name] = api
+                    self._device_apis[api.name] = api
                 case PageAPI():
-                    self._pagapis_by_name[api.name] = api
+                    self._page_apis[api.name] = api
                 case CalendarAPI():
-                    self._calapis_by_name[api.name] = api
-        # Setup System
-        self.system = System(self, "SYSTEM", self._driapis_by_name)
-        # Setup Rooms
-        self._room_ids = find_ids(self._driapis_by_name, REGEXP.ROOM)
-        self._create_rooms()
-        # Setup Sunblinds
-        self._sunblind_ids = find_ids(self._driapis_by_name, REGEXP.SUNBLIND)
-        self._create_sunblinds()
-        # Setup Calendars
-        self._calendar_ids = find_ids(self._calapis_by_name, REGEXP.CALENDAR)
-        self._create_calendars()
-        # Setup (generic) Devices
-        all_prefixes = {idx.split(".")[0] for idx in self._driapis_by_name}
-        unused_prefixes = all_prefixes - set(self._room_ids) - set(self._sunblind_ids)
-        # unused_prefixes.remove("SYSTEM") # Add SYSTEM to generic Device list as well
-        self._device_ids = list(unused_prefixes)
-        self._create_devices()
+                    self._calendar_apis[api.name] = api
+
+        self._index_addresses(apis)
+
+        self.system = System(self, "SYSTEM", self._driver_apis)
+        self.rooms = {idx: Room(self, idx, self._driver_apis) for idx in find_ids(self._driver_apis, REGEXP.ROOM)}
+        self.sunblinds = {
+            idx: Sunblind(self, idx, self._driver_apis) for idx in find_ids(self._driver_apis, REGEXP.SUNBLIND)
+        }
+        self.calendars = {
+            idx: Calendar(self, idx, self._calendar_apis) for idx in find_ids(self._calendar_apis, REGEXP.CALENDAR)
+        }
+        # Whatever is left over is exposed generically. SYSTEM is kept so its
+        # writable variables remain reachable.
+        device_ids = {unit_prefix(name) for name in self._driver_apis} - set(self.rooms) - set(self.sunblinds)
+        self.devices = {idx: Device(self, idx, self._driver_apis) for idx in sorted(device_ids)}
+
+    def close(self) -> None:
+        self._session.close()
+
+    def __enter__(self) -> "Controller":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        self.close()
+
+    # -- discovery ---------------------------------------------------------
+
+    def _index_addresses(self, apis: Iterable[API]) -> None:
+        """Pre-compute how large a reply each readable address produces."""
+        self._address_bytes: dict[str, int] = {}
+        self._structure_bytes: dict[str, int] = {}
+        for api in apis:
+            if isinstance(api, PageAPI):
+                continue
+            self._address_bytes[api.address] = api.response_bytes
+            structure = api.structure_address
+            self._structure_bytes[structure] = self._structure_bytes.get(structure, 0) + api.response_bytes
 
     def _get_xml(self) -> ElementTree.Element:
-        response = requests.get(self._url + XML_PATH)
-        if response.status_code != 200:
-            raise ConnectionError(f"Error getting XML: {response.status_code}")
-        return ElementTree.fromstring(response.content)
+        response = self._get(self._base_url + XML_PATH)
+        try:
+            return ElementTree.fromstring(response.content)
+        except ElementTree.ParseError as err:
+            raise IQtecResponseError(f"Malformed {XML_PATH}: {err}") from err
 
     def _get_apis(self) -> list[API]:
-        xml = self._get_xml()
-        apis = []
-        for child in xml:
-            apis.append(match_api(child.attrib))
-        return apis
+        return [match_api(child.attrib) for child in self._get_xml()]
 
-    def _create_rooms(self):
-        self.rooms = {}
-        for room_id in self._room_ids:
-            room = Room(
-                self,
-                room_id,
-                self._driapis_by_name,
+    # -- transport ---------------------------------------------------------
+
+    def _get(self, url: str) -> requests.Response:
+        try:
+            response = self._session.get(url, timeout=self.timeout)
+        except requests.RequestException as err:
+            raise IQtecConnectionError(f"Cannot reach {self.host}: {err}") from err
+        if response.status_code != 200:
+            raise IQtecConnectionError(f"{self.host} replied HTTP {response.status_code}")
+        response.encoding = self.encoding
+        return response
+
+    def _call_chunk(self, chunk: str) -> ResponseSet:
+        response = self._get(f"{self._base_url}{API_PATH}{chunk}")
+        if len(response.content) >= _TRUNCATION_WARNING_BYTES:
+            _LOGGER.warning(
+                "Reply to %r is %d bytes and was probably truncated by the controller",
+                chunk,
+                len(response.content),
             )
-            self.rooms[room_id] = room
+        return parse_responses(response.text)
 
-    def _create_sunblinds(self):
-        self.sunblinds = {}
-        for sunblind_id in self._sunblind_ids:
-            sunblind = Sunblind(self, sunblind_id, self._driapis_by_name)
-            self.sunblinds[sunblind_id] = sunblind
+    def _expected_bytes(self, getter: Get) -> int:
+        if getter.expected_bytes is not None:
+            return getter.expected_bytes
+        if getter.path.endswith("/"):
+            return self._structure_bytes.get(getter.path, MAX_RESPONSE_BYTES)
+        return self._address_bytes.get(getter.path, len(getter.path) + DEFAULT_VALUE_BYTES + 2)
 
-    def _create_calendars(self):
-        self.calendars = {}
-        for calendar_id in self._calendar_ids:
-            calendar = Calendar(self, calendar_id, self._calapis_by_name)
-            self.calendars[calendar_id] = calendar
+    def _encode(self, value: str) -> str:
+        try:
+            return quote(value, safe="", encoding=self.encoding)
+        except UnicodeEncodeError as err:
+            raise InvalidValueError(f"{value!r} is not representable in {self.encoding}") from err
 
-    def _create_devices(self):
-        self.devices = {}
-        for device_id in self._device_ids:
-            device = Device(self, device_id, self._driapis_by_name)
-            self.devices[device_id] = device
+    def _setter_fragment(self, setter: Set) -> tuple[str, int]:
+        fragment = f"{setter.path}={self._encode(setter.value)}"
+        # The controller echoes the variable back with its decoded value.
+        return fragment, len(setter.path) + len(setter.value) + 2
 
     def api_call(self, request_set: RequestSet) -> ResponseSet:
-        # Split GET to chunks
-        chunks = split_getters_to_chunks(request_set.getters)
+        """Run a request set, split into as few round-trips as the limits allow."""
+        responses: ResponseSet = {}
+        overhead = len(API_PATH)
 
-        path_set = ";".join([f"{r.path}={r.value}" for r in request_set.setters])
+        # Units can overlap (SYSTEM is also exposed as a generic device), so the
+        # same address may be asked for twice in one set.
+        seen: set[str] = set()
+        getters = [
+            (getter.path, self._expected_bytes(getter))
+            for getter in request_set.getters
+            if not (getter.path in seen or seen.add(getter.path))
+        ]
+        setters = [self._setter_fragment(setter) for setter in request_set.setters]
 
-        responses = {}
-        for chunk in chunks:
-            url = f"{self._url}{API_PATH}{chunk}"
-            r = requests.get(url)
-            r.encoding = self.encoding
-            if r.status_code != 200:
-                raise ConnectionError(f"HTTP ERROR: {r.status_code}")
-            responses.update(parse_responses(r.text))
-
-        if path_set:
-            url = f"{self._url}{API_PATH}{path_set}"
-            r = requests.get(url)
-            if r.status_code != 200:
-                raise ConnectionError(f"HTTP ERROR: {r.status_code}")
-            responses.update(parse_responses(r.text))
+        for chunk in pack_chunks(getters, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, overhead):
+            responses.update(self._call_chunk(chunk))
+        # Writes go out after reads so a read in the same set never observes a
+        # half-applied write.
+        for chunk in pack_chunks(setters, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, overhead):
+            responses.update(self._call_chunk(chunk))
 
         return responses
 
-    def update(self, api: API):
-        request = api.get_request()
-        response = self.api_call(request)
-        return api.parse(response)
+    # -- reading -----------------------------------------------------------
 
-    def update_status(self) -> State:
-        get_system = self.system.get_request
-        get_rooms = reduce(lambda x, y: x + y, (r.get_request for r in self.rooms.values()))
-        get_sunblinds = reduce(lambda x, y: x + y, (r.get_request for r in self.sunblinds.values()))
-        get_devices = reduce(lambda x, y: x + y, (r.get_request for r in self.devices.values()))
-        request = get_system + get_rooms + get_sunblinds + get_devices
-        response = self.api_call(request)
+    def read(self, api: API):
+        return api.parse(self.api_call(api.get_request()))
+
+    def update(self) -> State:
+        """Read the whole house."""
+        request = (
+            self.system.get_request
+            + sum((room.get_request for room in self.rooms.values()), RequestSet())
+            + sum((sunblind.get_request for sunblind in self.sunblinds.values()), RequestSet())
+            + sum((device.get_request for device in self.devices.values()), RequestSet())
+        )
+        responses = self.api_call(request)
         return State(
-            system=self.system.parse_state(response),
-            rooms={r_id: r.parse_state(response) for r_id, r in self.rooms.items()},
-            sunblinds={s_id: s.parse_state(response) for s_id, s in self.sunblinds.items()},
-            devices={d_id: d.parse_state(response) for d_id, d in self.devices.items()},
+            system=self.system.parse_state(responses),
+            rooms={idx: room.parse_state(responses) for idx, room in self.rooms.items()},
+            sunblinds={idx: sunblind.parse_state(responses) for idx, sunblind in self.sunblinds.items()},
+            devices={idx: device.parse_state(responses) for idx, device in self.devices.items()},
         )
 
-    def get_calendar_names(self):
-        pairs = []
-        for idx, c in self.calendars.items():
-            n = c.do_update()["Name"]
-            pairs.append((idx, n))
-        return pairs
+    def read_calendars(self) -> dict[str, CalendarState]:
+        request = sum((calendar.get_request for calendar in self.calendars.values()), RequestSet())
+        responses = self.api_call(request)
+        return {idx: calendar.parse_state(responses) for idx, calendar in self.calendars.items()}
+
+    def get_calendar_names(self) -> list[tuple[str, str | None]]:
+        return [(idx, state.name) for idx, state in self.read_calendars().items()]

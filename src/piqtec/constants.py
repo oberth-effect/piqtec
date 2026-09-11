@@ -1,16 +1,39 @@
-from enum import IntEnum, StrEnum
+"""Protocol constants, variable maps and value decoding rules."""
 
-MAX_RESPONSE_LENGTH = 100
+from collections.abc import Callable
+from enum import IntEnum, StrEnum
+from typing import Any
 
 API_PATH = "/control/?"
 
 XML_PATH = "/proj/data.xml"
 
+DEFAULT_ENCODING = "Windows-1250"
+
+DEFAULT_TIMEOUT = 5.0
+
+# The firmware reads the request line out of a single TCP segment and replies out
+# of a 4 KiB buffer. Measured limits are 1445 bytes of path (a 1460 byte request
+# line) and 4092 bytes of response; exceeding the first drops the connection and
+# exceeding the second truncates the reply silently, at a line boundary.
+MAX_REQUEST_BYTES = 1400
+
+MAX_RESPONSE_BYTES = 3800
+
+# Category prefixes of the /control/? address space.
 DRIVER_PREFIX = "1"
 
 CALENDAR_PREFIX = "2"
 
+ROOM_PREFIX = "3"
+
 DEVICE_PREFIX = "5"
+
+SCENARIO_PREFIX = "8"
+
+# A leading "!" marks a variable the controller cannot currently supply,
+# for example "!off" for a probe that is switched off.
+SENTINEL_PREFIX = "!"
 
 
 class REGEXP:
@@ -22,7 +45,69 @@ class REGEXP:
 FAILURE_VAR = "_Failure"
 
 
-class SYSTEM_VARS(StrEnum):
+def _to_bool(value: str) -> bool:
+    return bool(int(value))
+
+
+def _to_str(value: str) -> str:
+    return value.strip()
+
+
+# Decoders keyed on the type attribute declared in data.xml. The controller
+# already returns human-readable values, so this only picks the Python type.
+VALUE_DECODERS: dict[str, Callable[[str], Any]] = {
+    "bool": _to_bool,
+    "byte": int,
+    "word": int,
+    "short": int,
+    "long": int,
+    "datetime": int,
+    "color": int,
+    "float": float,
+    "Temperature": float,
+    "Humidity": float,
+    "Percentage": float,
+    "AD_DA": float,
+    "flow": float,
+    "string8": _to_str,
+    "string10": _to_str,
+    "string16": _to_str,
+    "calendar": _to_str,
+    "OnOff": int,
+    "OnOffAuto": int,
+    "RoomMode": int,
+    "CorrectionStatus": int,
+    "FanCommand": int,
+    "KeyLED": int,
+    "CalendarIndex": int,
+    "FiveMinutes": int,
+    "SunSchedule": int,
+    "SUNBLIND_STATE": int,
+    "SUNBLIND_COMMAND": int,
+    "calendarcommand": int,
+    "DwType": int,
+    "DwTypeExt": int,
+    "FaultState": int,
+}
+
+DEFAULT_VALUE_BYTES = 12
+
+# Upper bound on the encoded length of a value, used to budget response size.
+VALUE_MAX_BYTES: dict[str, int] = {
+    "bool": 1,
+    "byte": 3,
+    "word": 5,
+    "short": 6,
+    "long": 11,
+    "datetime": 11,
+    "string8": 8,
+    "string10": 10,
+    "string16": 16,
+    "calendar": 1100,
+}
+
+
+class SystemVar(StrEnum):
     failure = "_Failure"
     relay_check = "RelayCheck"
     hdo = "HDO"
@@ -115,7 +200,7 @@ class SYSTEM_VARS(StrEnum):
     minute_in_day_corr = "MinuteInDayCorr"
 
 
-class ROOM_VARS(StrEnum):
+class RoomVar(StrEnum):
     fan_command = "FanCommand"
     name = "_RoomName"
     eco_mode = "EcoMode"
@@ -159,21 +244,21 @@ class ROOM_VARS(StrEnum):
     calendar_temperature = "CalendarTemperature"
 
 
-class ROOM_MODES(IntEnum):
+class RoomMode(IntEnum):
     CALENDAR = 0
     ANTIFREEZE = 1
     HOLIDAY = 2
     OFF = 3
 
 
-class ROOM_CORR_MODES(IntEnum):
+class RoomCorrectionMode(IntEnum):
     NONE = 0
     DAY = 1
     NIGHT = 2
     MANUAL = 3
 
 
-class SUNBLIND_VARS(StrEnum):
+class SunblindVar(StrEnum):
     failure = "_Failure"
     out_up_1 = "OutUP_1"
     out_up_2 = "OutUP_2"
@@ -205,12 +290,12 @@ class SUNBLIND_VARS(StrEnum):
     state2 = "_state"
 
 
-class SUNBLIND_COMMANDS(IntEnum):
-    UP = 0  # move_time # forces position and rotation to 0
-    DOWN = 1  # move_time # forces position and rotation to max
+class SunblindCommand(IntEnum):
+    UP = 0  # move_time, forces position and rotation to 0
+    DOWN = 1  # move_time, forces position and rotation to max
     DOWN_TILT = 2  # move_time + reverse_time (waiting) + tilt_time
     STOP = 3
-    TILT_OPEN = 4  # short_down_tim + reverse_time + tilt_time
+    TILT_OPEN = 4  # short_down_time + reverse_time + tilt_time
     STEP_UP = 5  # step_time
     STEP_DOWN = 6  # step_time
     UP_AND_DISABLE = 7  # move_time
