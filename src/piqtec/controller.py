@@ -17,6 +17,7 @@ from .constants import (
     MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES,
     REGEXP,
+    VALUE_SAFE_CHARS,
     XML_PATH,
 )
 from .exceptions import InvalidValueError, IQtecConnectionError, IQtecResponseError
@@ -111,12 +112,16 @@ class Controller:
             idx: Sunblind(self, idx, self._driver_apis) for idx in find_ids(self._driver_apis, REGEXP.SUNBLIND)
         }
         self.calendars = {
-            idx: Calendar(self, idx, self._calendar_apis) for idx in find_ids(self._calendar_apis, REGEXP.CALENDAR)
+            idx: Calendar(self, idx, self._calendar_apis, self._calendar_color_api(idx))
+            for idx in find_ids(self._calendar_apis, REGEXP.CALENDAR)
         }
         # Whatever is left over is exposed generically. SYSTEM is kept so its
         # writable variables remain reachable.
         device_ids = {unit_prefix(name) for name in self._driver_apis} - set(self.rooms) - set(self.sunblinds)
         self.devices = {idx: Device(self, idx, self._driver_apis) for idx in sorted(device_ids)}
+
+    def _calendar_color_api(self, idx: str) -> CalendarAPI | None:
+        return self._calendar_apis.get(idx.replace("_CALENDAR_", "_CALENDARCOLOR_"))
 
     def close(self) -> None:
         self._session.close()
@@ -181,7 +186,7 @@ class Controller:
 
     def _encode(self, value: str) -> str:
         try:
-            return quote(value, safe="", encoding=self.encoding)
+            return quote(value, safe=VALUE_SAFE_CHARS, encoding=self.encoding)
         except UnicodeEncodeError as err:
             raise InvalidValueError(f"{value!r} is not representable in {self.encoding}") from err
 
@@ -242,3 +247,7 @@ class Controller:
 
     def get_calendar_names(self) -> list[tuple[str, str | None]]:
         return [(idx, state.name) for idx, state in self.read_calendars().items()]
+
+    def write_calendar(self, idx: str, state: CalendarState) -> None:
+        """Replace one calendar's schedule."""
+        self.calendars[idx].write(state)

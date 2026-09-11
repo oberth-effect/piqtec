@@ -35,6 +35,40 @@ SCENARIO_PREFIX = "8"
 # for example "!off" for a probe that is switched off.
 SENTINEL_PREFIX = "!"
 
+# Characters left un-escaped in a written value. ";" and "=" delimit the
+# protocol itself and must stay encoded, as must "&", "+", "#" and "%"; keeping
+# the rest raw is what lets a calendar payload fit in the request line.
+VALUE_SAFE_CHARS = "[]:,/?@!$'()*"
+
+# Calendars are a fixed 8 days of 8 edges. Day 0 is Monday, days 1-6 run to
+# Sunday and day 7 is the separately selectable "day 8". Times are counted in
+# 5 minute steps, so a day spans 0..288 and both ends are pinned.
+CALENDAR_DAYS = 8
+CALENDAR_EDGES = 8
+CALENDAR_DAY_END = 288
+CALENDAR_TIME_STEP_MINUTES = 5
+CALENDAR_TEMPERATURES = 6
+
+
+class CalendarType(StrEnum):
+    TEMPERATURE = "TEMPERATURE"
+    BLIND = "BLIND"
+    ON_OFF = "ON_OFF"
+    VALUE = "VALUE"
+    ON_OFF2 = "ON_OFF2"
+
+
+class CalendarLevel(IntEnum):
+    """The three outputs a calendar drives (OutNobody, OutNight, OutDay)."""
+
+    NOBODY = 0
+    NIGHT = 1
+    DAY = 2
+
+
+#: Calendar types that only ever show two states; NIGHT reads as NOBODY there.
+TWO_STATE_CALENDARS = frozenset({CalendarType.ON_OFF, CalendarType.ON_OFF2})
+
 
 class REGEXP:
     ROOM = r"^R\d{1,2}$"
