@@ -12,8 +12,6 @@ your mileage may vary.
 
 The package aims to make the API accessible in Python and convert the values to correct datatypes, based on descriptions
 from the `data.xml` file fetched from the endpoint.
-The API requests are batched so the endpoint is not overloaded, and the return does not overflow the buffer (see:
-`piqtec.controller.Controller.api_call` and `piqtec.constants.MAX_RESPONSE_LENGTH`).
 
 Intended to be used
 with [this custom Home Assistant integration.](https://github.com/oberth-effect/iqtec-ha-integration)
@@ -31,11 +29,10 @@ with [this custom Home Assistant integration.](https://github.com/oberth-effect/
 ### Print whole current state
 
 ```python
-from piqtec.controller import Controller
+from piqtec import Controller
 
-c = Controller("controller_ip_or_hostname:port")
-state = c.update_status()
-print(state)
+with Controller("controller_ip_or_hostname:port") as c:
+    print(c.update())
 ```
 
 ### Example commands
@@ -43,23 +40,51 @@ print(state)
 (for all possible "nice" commands see unit modules)
 
 ```python
-from piqtec.controller import Controller
-from piqtec.constants import ROOM_MODES
+from piqtec import Controller, RoomMode
 
 c = Controller("controller_ip_or_hostname:port")
 
-c.rooms["<ROOM_ID>"].set_room_mode(ROOM_MODES.CALENDAR)
+c.rooms["<ROOM_ID>"].set_room_mode(RoomMode.CALENDAR)
+c.rooms["<ROOM_ID>"].set_manual_temperature(21.5, correction_time=24)
 ```
 
 ### Example raw API usage
 
 ```python
-from piqtec.controller import Controller
+from piqtec import Controller
 
 c = Controller("controller_ip_or_hostname:port")
-r = c.devices["<DEVICE_ID>"].switch_apis["<SWITCH_ID>"].set_request("<VALUE>")
-c.api_call(r)
+
+api = c.devices["<DEVICE_ID>"].switch_apis["<VARIABLE_NAME>"]
+c.api_call(api.set_request("<VALUE>"))
+print(c.read(api))
 ```
+
+## Notes on the protocol
+
+The controller's HTTP interface has two hard limits, both of which fail *silently*:
+
+- the request line must fit in a single TCP segment — 1445 bytes of path,
+  beyond which the connection is dropped without a reply;
+- a reply is produced from a 4 KiB buffer and is cut off at 4092 bytes, at a
+  line boundary and without any error.
+
+`Controller.api_call` therefore packs a request set into as few round-trips as
+both budgets allow, estimating the reply size from the types declared in
+`data.xml` (see `piqtec.constants.MAX_REQUEST_BYTES` and `MAX_RESPONSE_BYTES`).
+
+Values are decoded according to the `type` attribute of `data.xml`. Variables the
+controller cannot currently supply come back as `"!off"` and are decoded to
+`None`, as are variables absent from a given installation.
+
+The `access` attribute is interpreted as a heuristic — an upper-case `U` marks a
+writable variable. The OEM web application ignores the attribute entirely, so
+this is an informed guess rather than a documented rule.
+
+## Errors
+
+Everything raised by this package derives from `piqtec.IQtecError`; `requests`
+exceptions never escape. Connection problems surface as `IQtecConnectionError`.
 
 ## License
 
