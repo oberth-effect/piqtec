@@ -60,6 +60,39 @@ c.api_call(api.set_request("<VALUE>"))
 print(c.read(api))
 ```
 
+### Editing a calendar
+
+A calendar is a fixed grid of 8 days by 8 edges, but the useful view is the list
+of transitions: the moments the level changes. `piqtec` packs that list back into
+the grid for you.
+
+```python
+from piqtec import CalendarLevel, Controller
+
+c = Controller("controller_ip_or_hostname:port")
+cal = c.calendars["_CALENDAR_00"]
+
+state = cal.update()
+monday = state.days[0]
+print([(e.minutes, CalendarLevel(e.level).name) for e in monday.transitions])
+
+monday.add_transition(250, CalendarLevel.NOBODY)   # 20:50
+monday.move_transition(1, 90)                      # 07:30
+state.temperatures[2] = 21.0                       # heating "Day" setpoint
+state.name = "Weekdays"
+
+cal.write(state)     # validates, then replaces the whole calendar
+```
+
+Levels are `NOBODY = 0`, `NIGHT = 1` and `DAY = 2`, matching the controller's
+`OutNobody`, `OutNight` and `OutDay` outputs. `Temperatures` holds six setpoints:
+those three while heating, then the same three while cooling. Day 0 is Monday,
+days 1-6 run to Sunday, and day 7 is the separately selectable "day 8".
+
+Times are counted in 5 minute steps from midnight, so a day spans 0..288. The
+first transition is pinned to midnight, the final edge only terminates the day,
+and a day therefore holds between 1 and 7 transitions.
+
 ## Notes on the protocol
 
 The controller's HTTP interface has two hard limits, both of which fail *silently*:
@@ -72,6 +105,9 @@ The controller's HTTP interface has two hard limits, both of which fail *silentl
 `Controller.api_call` therefore packs a request set into as few round-trips as
 both budgets allow, estimating the reply size from the types declared in
 `data.xml` (see `piqtec.constants.MAX_REQUEST_BYTES` and `MAX_RESPONSE_BYTES`).
+
+Written values are percent-encoded, but only as far as the protocol requires:
+escaping everything would push a calendar payload past the request limit.
 
 Values are decoded according to the `type` attribute of `data.xml`. Variables the
 controller cannot currently supply come back as `"!off"` and are decoded to
