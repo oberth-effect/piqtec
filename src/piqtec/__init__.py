@@ -1,11 +1,17 @@
 """Python interface to IQtec / Kobra smart home controllers."""
 
 from .constants import (
+    CALENDAR_DAY_END,
+    CALENDAR_DAYS,
+    CALENDAR_EDGES,
+    CALENDAR_TIME_STEP_MINUTES,
     MAX_REQUEST_BYTES,
     MAX_RESPONSE_BYTES,
     MOVE_TIME_UNITS,
     SUNBLIND_EXTENDED,
     SUNBLIND_TILT_CLOSED,
+    CalendarLevel,
+    CalendarType,
     RoomCorrectionMode,
     RoomMode,
     RoomVar,
@@ -22,20 +28,28 @@ from .exceptions import (
     ReadOnlyVariableError,
     RequestTooLongError,
 )
-from .unit.calendar import Calendar, CalendarState
+from .unit.calendar import Calendar, CalendarDay, CalendarEdge, CalendarState
 from .unit.device import Device, DeviceState
 from .unit.room import Room, RoomState
 from .unit.sunblind import Sunblind, SunblindState
 from .unit.system import System, SystemState
 
 __all__ = [
+    "CALENDAR_DAYS",
+    "CALENDAR_DAY_END",
+    "CALENDAR_EDGES",
+    "CALENDAR_TIME_STEP_MINUTES",
     "MAX_REQUEST_BYTES",
     "MAX_RESPONSE_BYTES",
     "MOVE_TIME_UNITS",
     "SUNBLIND_EXTENDED",
     "SUNBLIND_TILT_CLOSED",
     "Calendar",
+    "CalendarDay",
+    "CalendarEdge",
+    "CalendarLevel",
     "CalendarState",
+    "CalendarType",
     "Controller",
     "Device",
     "DeviceState",
