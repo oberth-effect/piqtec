@@ -14,6 +14,7 @@ the spares. Work through :attr:`CalendarDay.transitions` and
 
 import json
 from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Self
 
 from ..api.generic import CalendarAPI
@@ -184,6 +185,15 @@ class CalendarDay:
         self.set_transitions(transitions)
 
 
+@dataclass(frozen=True)
+class CalendarPeriod:
+    """A stretch of wall-clock time during which one level is in force."""
+
+    start: datetime
+    end: datetime
+    level: int
+
+
 @dataclass
 class CalendarState:
     """Everything the controller stores about one calendar."""
@@ -226,6 +236,52 @@ class CalendarState:
         if 0 <= index < len(self.temperatures):
             return self.temperatures[index]
         return None
+
+    def day_for_weekday(self, weekday: int) -> "CalendarDay":
+        """The day applying to a weekday (0 Monday), resolving "follows Monday".
+
+        Only days 0-6 are dated. Day 7 is the separately selectable "day 8",
+        which the controller switches to through an input rather than a date.
+        """
+        day = self.days[weekday]
+        return self.days[0] if day.as_monday and weekday > 0 else day
+
+    def _at(self, day: date, units: int, tzinfo: Any) -> datetime:
+        """Wall-clock local time of a transition, so it survives DST changes."""
+        minutes = units * CALENDAR_TIME_STEP_MINUTES
+        return datetime(day.year, day.month, day.day, minutes // 60, minutes % 60, tzinfo=tzinfo)
+
+    def periods(self, start: datetime, end: datetime) -> list[CalendarPeriod]:
+        """Every level period overlapping ``[start, end)``.
+
+        The weekly pattern is materialised across the window in the time zone of
+        ``start``. A period that runs past midnight into a day that opens on the
+        same level is merged, so the result is the schedule as experienced rather
+        than one entry per stored transition.
+        """
+        if not self.days:
+            return []
+        tzinfo = start.tzinfo
+
+        # A day either side, so periods reaching into the window are complete.
+        first = start.date() - timedelta(days=1)
+        last = end.date() + timedelta(days=1)
+
+        marks: list[tuple[datetime, int]] = []
+        for offset in range((last - first).days + 1):
+            current = first + timedelta(days=offset)
+            for edge in self.day_for_weekday(current.weekday()).transitions:
+                marks.append((self._at(current, edge.time, tzinfo), edge.level))
+
+        periods: list[list[Any]] = []
+        for (began, level), (next_began, _) in zip(marks, marks[1:], strict=False):
+            # Within a day a level never repeats, so this only merges at midnight.
+            if periods and periods[-1][2] == level:
+                periods[-1][1] = next_began
+            else:
+                periods.append([began, next_began, level])
+
+        return [CalendarPeriod(p[0], p[1], p[2]) for p in periods if p[1] > start and p[0] < end]
 
     def validate(self) -> None:
         """Raise if the controller would reject this calendar."""

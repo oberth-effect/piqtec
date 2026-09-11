@@ -28,7 +28,7 @@ from .exceptions import (
     ReadOnlyVariableError,
     RequestTooLongError,
 )
-from .unit.calendar import Calendar, CalendarDay, CalendarEdge, CalendarState
+from .unit.calendar import Calendar, CalendarDay, CalendarEdge, CalendarPeriod, CalendarState
 from .unit.device import Device, DeviceState
 from .unit.room import Room, RoomState
 from .unit.sunblind import Sunblind, SunblindState
@@ -48,6 +48,7 @@ __all__ = [
     "CalendarDay",
     "CalendarEdge",
     "CalendarLevel",
+    "CalendarPeriod",
     "CalendarState",
     "CalendarType",
     "Controller",
