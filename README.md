@@ -132,6 +132,13 @@ The `access` attribute is interpreted as a heuristic — an upper-case `U` marks
 writable variable. The OEM web application ignores the attribute entirely, so
 this is an informed guess rather than a documented rule.
 
+## Versioning
+
+Releases are numbered in step with
+[the Home Assistant integration](https://github.com/oberth-effect/iqtec-ha-integration),
+which pins the matching version exactly. A release of one is a release of both,
+even when only one of them changed.
+
 ## Errors
 
 Everything raised by this package derives from `piqtec.IQtecError`; `requests`
