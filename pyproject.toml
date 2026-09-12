@@ -1,6 +1,6 @@
 [project]
 name = "piqtec"
-version = "0.5.0"
+version = "0.6.0"
 description = "A Python interface to the IQtec / Kobra smart home solutions."
 readme = "README.md"
 license = "CC-BY-NC-SA-4.0"
