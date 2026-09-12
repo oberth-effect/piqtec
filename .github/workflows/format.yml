@@ -5,6 +5,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/ruff-action@v3
-        with:
-          args: "format --check --diff"
+      - uses: astral-sh/setup-uv@v5
+      # Runs the ruff pinned in uv.lock, so CI checks what the pre-commit
+      # and local runs check, rather than whatever ruff was released last.
+      - run: uv run --frozen --only-group dev ruff format --check --diff
