@@ -10,12 +10,13 @@ from ..constants import (
     DEFAULT_VALUE_BYTES,
     DEVICE_PREFIX,
     DRIVER_PREFIX,
+    INTEGER_TYPES,
     SCENARIO_PREFIX,
     SENTINEL_PREFIX,
     VALUE_DECODERS,
     VALUE_MAX_BYTES,
 )
-from ..exceptions import IQtecError, ReadOnlyVariableError
+from ..exceptions import InvalidValueError, IQtecError, ReadOnlyVariableError
 from ..type_helpers import Get, RequestSet, ResponseSet, Set
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,6 +39,28 @@ def decode_value(typ: str, raw: str) -> Any:
     except (TypeError, ValueError):
         _LOGGER.debug("Cannot decode %r as %s", raw, typ)
         return None
+
+
+def encode_value(typ: str, value: Any) -> str:
+    """Render a Python value the way a variable of ``typ`` is written.
+
+    Strings are sent as given, so raw API usage stays in control of the exact
+    bytes. Booleans and every integer type are rendered as whole numbers: a
+    slider handing over ``3.0`` must reach a ``byte`` variable as ``3``, which is
+    the only form the controller (and :func:`decode_value`) accepts.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return str(int(value))
+    if typ in INTEGER_TYPES:
+        if isinstance(value, float) and not value.is_integer():
+            raise InvalidValueError(f"{value!r} is not a whole number, as a {typ} variable requires")
+        try:
+            return str(int(value))
+        except (TypeError, ValueError) as err:
+            raise InvalidValueError(f"{value!r} cannot be written to a {typ} variable") from err
+    return str(value)
 
 
 @dataclass
@@ -83,19 +106,13 @@ class API(ABC):
     def set_request(self, value: Any) -> RequestSet:
         if self.readonly:
             raise ReadOnlyVariableError(f"Cannot set read-only variable {self.name}")
-        return RequestSet(setters=[Set(path=self.address, value=_format_value(value))])
+        return RequestSet(setters=[Set(path=self.address, value=encode_value(self.typ, value))])
 
     def parse(self, responses: ResponseSet) -> Any:
         response = responses.get(self.address)
         if response is None:
             return None
         return decode_value(self.typ, response.value)
-
-
-def _format_value(value: Any) -> str:
-    if isinstance(value, bool):
-        return str(int(value))
-    return str(value)
 
 
 @dataclass

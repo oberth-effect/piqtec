@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from ..api.generic import DriverAPI
+from ..exceptions import MissingVariableError
 from ..type_helpers import Get, RequestSet, ResponseSet
 from ..utils import find_names, merge_requests
 
@@ -67,5 +68,5 @@ class Device:
     def set_value(self, name: str, value: Any) -> None:
         api = self.switch_apis.get(name)
         if api is None:
-            raise KeyError(f"{self.idx} has no writable variable {name!r}")
+            raise MissingVariableError(f"{self.idx} has no writable variable {name!r}")
         self._controller.api_call(api.set_request(value))

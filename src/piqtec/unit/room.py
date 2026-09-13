@@ -83,8 +83,8 @@ class Room(StatefulUnit[RoomState]):
         controller applies them in order and never observes a half-set state.
         """
         request = (
-            self.apis["correction_status"].set_request(int(RoomCorrectionMode.MANUAL))
-            + self.apis["correction_time"].set_request(correction_time)
-            + self.apis["correction_temperature"].set_request(temperature)
+            self._require("correction_status").set_request(int(RoomCorrectionMode.MANUAL))
+            + self._require("correction_time").set_request(correction_time)
+            + self._require("correction_temperature").set_request(temperature)
         )
         self._controller.api_call(request)

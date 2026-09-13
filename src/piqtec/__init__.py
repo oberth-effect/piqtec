@@ -1,5 +1,6 @@
 """Python interface to IQtec / Kobra smart home controllers."""
 
+from .api.generic import API, CalendarAPI, DeviceAPI, DriverAPI, PageAPI, ScenarioAPI
 from .constants import (
     CALENDAR_DAY_END,
     CALENDAR_DAYS,
@@ -26,6 +27,7 @@ from .exceptions import (
     IQtecConnectionError,
     IQtecError,
     IQtecResponseError,
+    MissingVariableError,
     ReadOnlyVariableError,
     RequestTooLongError,
 )
@@ -36,6 +38,7 @@ from .unit.sunblind import Sunblind, SunblindState
 from .unit.system import System, SystemState
 
 __all__ = [
+    "API",
     "CALENDAR_DAYS",
     "CALENDAR_DAY_END",
     "CALENDAR_EDGES",
@@ -47,6 +50,7 @@ __all__ = [
     "SUNBLIND_TILT_CLOSED",
     "TWO_STATE_CALENDARS",
     "Calendar",
+    "CalendarAPI",
     "CalendarDay",
     "CalendarEdge",
     "CalendarLevel",
@@ -55,11 +59,15 @@ __all__ = [
     "CalendarType",
     "Controller",
     "Device",
+    "DeviceAPI",
     "DeviceState",
+    "DriverAPI",
     "IQtecConnectionError",
     "IQtecError",
     "IQtecResponseError",
     "InvalidValueError",
+    "MissingVariableError",
+    "PageAPI",
     "ReadOnlyVariableError",
     "RequestTooLongError",
     "Room",
@@ -67,6 +75,7 @@ __all__ = [
     "RoomMode",
     "RoomState",
     "RoomVar",
+    "ScenarioAPI",
     "State",
     "Sunblind",
     "SunblindCommand",

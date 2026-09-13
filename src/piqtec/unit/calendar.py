@@ -14,7 +14,7 @@ the spares. Work through :attr:`CalendarDay.transitions` and
 
 import json
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Self
 
 from ..api.generic import CalendarAPI
@@ -37,6 +37,26 @@ MAX_NAME_LENGTH = 16
 
 #: The last edge only terminates the day, so 7 of the 8 can carry a transition.
 MAX_TRANSITIONS = CALENDAR_EDGES - 1
+
+_LEVELS = tuple(CalendarLevel)
+
+
+def _whole(value: Any, what: str) -> int:
+    """``value`` as an int, refusing to truncate or guess."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError) as err:
+        raise InvalidValueError(f"{what} must be a whole number, got {value!r}") from err
+    if number != value:
+        raise InvalidValueError(f"{what} must be a whole number, got {value!r}")
+    return number
+
+
+def _level(value: Any) -> int:
+    level = _whole(value, "A level")
+    if level not in _LEVELS:
+        raise InvalidValueError(f"Level {level} is not 0, 1 or 2")
+    return level
 
 
 @dataclass
@@ -102,14 +122,16 @@ class CalendarDay:
         if len(transitions) > MAX_TRANSITIONS:
             raise InvalidValueError(f"A day holds at most {MAX_TRANSITIONS} transitions")
 
-        packed = [CalendarEdge(int(t.time), int(t.level)) for t in transitions]
+        packed = [CalendarEdge(_whole(t.time, "A transition time"), _level(t.level)) for t in transitions]
         packed.sort(key=lambda e: e.time)
+        # Checked before repeats are dropped, so the verdict does not depend on
+        # which of two same-time transitions happened to come first.
+        if len({e.time for e in packed}) != len(packed):
+            raise InvalidValueError("Two transitions cannot share a time")
         # A repeated level is not a change, so it is not a transition.
         packed = [e for i, e in enumerate(packed) if i == 0 or e.level != packed[i - 1].level]
         if packed[0].time != 0:
             raise InvalidValueError("The first transition of a day must start at midnight")
-        if len({e.time for e in packed}) != len(packed):
-            raise InvalidValueError("Two transitions cannot share a time")
         if packed[-1].time >= CALENDAR_DAY_END:
             raise InvalidValueError(f"A transition must fall before {CALENDAR_DAY_END}")
 
@@ -142,7 +164,7 @@ class CalendarDay:
 
     def add_transition(self, time: int, level: int) -> None:
         """Add a change of level at ``time``."""
-        time = int(time)
+        time = _whole(time, "A transition time")
         if not 0 < time < CALENDAR_DAY_END:
             raise InvalidValueError(f"A transition must fall inside the day, got {time}")
         transitions = self.transitions
@@ -173,7 +195,7 @@ class CalendarDay:
         high = transitions[index + 1].time - 1 if index + 1 < len(transitions) else CALENDAR_DAY_END - 1
         if not low <= time <= high:
             raise InvalidValueError(f"Transition {index} must stay between {low} and {high}, got {time}")
-        transitions[index].time = int(time)
+        transitions[index].time = _whole(time, "A transition time")
         self.set_transitions(transitions)
 
     def set_transition_level(self, index: int, level: int) -> None:
@@ -181,7 +203,7 @@ class CalendarDay:
         transitions = self.transitions
         if not 0 <= index < len(transitions):
             raise InvalidValueError(f"No transition at index {index}")
-        transitions[index].level = int(level)
+        transitions[index].level = _level(level)
         self.set_transitions(transitions)
 
 
@@ -192,6 +214,33 @@ class CalendarPeriod:
     start: datetime
     end: datetime
     level: int
+
+
+def _exists(local: datetime) -> bool:
+    """Whether an aware wall-clock time actually occurs in its zone."""
+    round_trip = local.astimezone(UTC).astimezone(local.tzinfo)
+    return round_trip.replace(tzinfo=None) == local.replace(tzinfo=None)
+
+
+def _gap_end(local: datetime) -> datetime:
+    """The instant a clock jumping over ``local`` lands on, in local time.
+
+    ``local`` is a wall-clock time the zone skips. With ``fold=1`` it carries the
+    offset from after the jump and so names an instant before it; with the
+    default ``fold=0`` an instant after it. The jump itself is found between the
+    two, to the minute.
+    """
+    tzinfo = local.tzinfo
+    before = local.replace(fold=1).astimezone(UTC)
+    after = local.astimezone(UTC)
+    minute = timedelta(minutes=1)
+    while after - before > minute:
+        middle = before + minute * ((after - before) // minute // 2)
+        if middle.astimezone(tzinfo).utcoffset() == after.astimezone(tzinfo).utcoffset():
+            after = middle
+        else:
+            before = middle
+    return after.astimezone(tzinfo)
 
 
 @dataclass
@@ -217,7 +266,7 @@ class CalendarState:
         """The payload the controller accepts. CRC is read-only and omitted."""
         return {
             "Name": self.name or "",
-            "Temperatures": list(self.temperatures),
+            "Temperatures": [float(t) for t in self.temperatures],
             "Days": [day.as_json() for day in self.days],
         }
 
@@ -231,25 +280,41 @@ class CalendarState:
         """Setpoints for Nobody, Night and Day while cooling."""
         return self.temperatures[3:6]
 
-    def temperature_for(self, level: int, cooling: bool = False) -> float | None:
+    def temperature_for(self, level: int | None, cooling: bool = False) -> float | None:
+        """The setpoint for ``level``, or ``None`` when the level or setpoint is unknown."""
+        if level is None:
+            return None
         index = int(level) + (3 if cooling else 0)
         if 0 <= index < len(self.temperatures):
             return self.temperatures[index]
         return None
 
-    def day_for_weekday(self, weekday: int) -> "CalendarDay":
+    def day_for_weekday(self, weekday: int) -> "CalendarDay | None":
         """The day applying to a weekday (0 Monday), resolving "follows Monday".
 
         Only days 0-6 are dated. Day 7 is the separately selectable "day 8",
         which the controller switches to through an input rather than a date.
+        ``None`` when the calendar holds no such day, as one read back from a
+        switched-off variable does.
         """
+        if not 0 <= weekday < len(self.days):
+            return None
         day = self.days[weekday]
         return self.days[0] if day.as_monday and weekday > 0 else day
 
     def _at(self, day: date, units: int, tzinfo: Any) -> datetime:
-        """Wall-clock local time of a transition, so it survives DST changes."""
+        """Wall-clock local time of a transition, so it survives DST changes.
+
+        A time the clock skips on the spring-forward day is resolved to the
+        moment the clock jumps, which is when a clock-driven controller reaches
+        it; stamping it with the offset from before the jump would place it
+        after transitions that follow it on the wall clock.
+        """
         minutes = units * CALENDAR_TIME_STEP_MINUTES
-        return datetime(day.year, day.month, day.day, minutes // 60, minutes % 60, tzinfo=tzinfo)
+        local = datetime(day.year, day.month, day.day, minutes // 60, minutes % 60, tzinfo=tzinfo)
+        if tzinfo is None or _exists(local):
+            return local
+        return _gap_end(local)
 
     def periods(self, start: datetime, end: datetime) -> list[CalendarPeriod]:
         """Every level period overlapping ``[start, end)``.
@@ -257,20 +322,26 @@ class CalendarState:
         The weekly pattern is materialised across the window in the time zone of
         ``start``. A period that runs past midnight into a day that opens on the
         same level is merged, so the result is the schedule as experienced rather
-        than one entry per stored transition.
+        than one entry per stored transition. A calendar without all seven
+        weekdays cannot be projected and yields nothing.
         """
-        if not self.days:
+        if len(self.days) < CALENDAR_DAYS - 1:
             return []
         tzinfo = start.tzinfo
 
-        # A day either side, so periods reaching into the window are complete.
-        first = start.date() - timedelta(days=1)
-        last = end.date() + timedelta(days=1)
+        # A week either side, so a period reaching into the window is complete
+        # even when the neighbouring days hold a single level all day. Only a
+        # level in force for more than a week is cut short.
+        first = start.date() - timedelta(days=7)
+        last = end.date() + timedelta(days=7)
 
         marks: list[tuple[datetime, int]] = []
         for offset in range((last - first).days + 1):
             current = first + timedelta(days=offset)
-            for edge in self.day_for_weekday(current.weekday()).transitions:
+            day = self.day_for_weekday(current.weekday())
+            if day is None:
+                continue
+            for edge in day.transitions:
                 marks.append((self._at(current, edge.time, tzinfo), edge.level))
 
         periods: list[list[Any]] = []
@@ -289,6 +360,9 @@ class CalendarState:
             raise InvalidValueError(f"A calendar name is at most {MAX_NAME_LENGTH} characters")
         if len(self.temperatures) != CALENDAR_TEMPERATURES:
             raise InvalidValueError(f"Expected {CALENDAR_TEMPERATURES} temperatures, got {len(self.temperatures)}")
+        for index, temperature in enumerate(self.temperatures):
+            if isinstance(temperature, bool) or not isinstance(temperature, int | float):
+                raise InvalidValueError(f"Temperature {index}: {temperature!r} is not a number")
         if len(self.days) != CALENDAR_DAYS:
             raise InvalidValueError(f"Expected {CALENDAR_DAYS} days, got {len(self.days)}")
 
@@ -302,7 +376,7 @@ class CalendarState:
             if day.edges[-1].level != day.edges[-2].level:
                 raise InvalidValueError(f"Day {index}: the last edge only terminates the day and cannot change level")
             for slot, edge in enumerate(day.edges):
-                if edge.level not in tuple(CalendarLevel):
+                if edge.level not in _LEVELS:
                     raise InvalidValueError(f"Day {index} edge {slot}: level {edge.level} is not 0, 1 or 2")
                 if slot and edge.time <= day.edges[slot - 1].time:
                     raise InvalidValueError(f"Day {index} edge {slot}: times must strictly increase")
@@ -354,9 +428,11 @@ class Calendar:
             return CalendarState(calendar_type=self.calendar_type)
         try:
             data = json.loads(raw)
-        except json.JSONDecodeError as err:
+            state = CalendarState.from_json(data, self.calendar_type)
+        # Invalid JSON is a ValueError; valid JSON of the wrong shape surfaces
+        # as any of the others while it is picked apart.
+        except (ValueError, TypeError, AttributeError, IndexError, KeyError) as err:
             raise IQtecResponseError(f"Malformed calendar payload for {self.idx}: {err}") from err
-        state = CalendarState.from_json(data, self.calendar_type)
         if self.color_api:
             state.color = self.color_api.parse(response_set)
         return state

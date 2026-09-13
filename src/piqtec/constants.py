@@ -37,8 +37,10 @@ SENTINEL_PREFIX = "!"
 
 # Characters left un-escaped in a written value. ";" and "=" delimit the
 # protocol itself and must stay encoded, as must "&", "+", "#" and "%"; keeping
-# the rest raw is what lets a calendar payload fit in the request line.
-VALUE_SAFE_CHARS = "[]:,/?@!$'()*"
+# the rest raw is what lets a calendar payload fit in the request line. "[" and
+# "]" are not listed because urllib3 re-encodes them on the way out whatever is
+# asked for, and the request budget has to count what actually goes on the wire.
+VALUE_SAFE_CHARS = ":,/?@!$'()*"
 
 # Calendars are a fixed 8 days of 8 edges. Day 0 is Monday, days 1-6 run to
 # Sunday and day 7 is the separately selectable "day 8". Times are counted in
@@ -123,6 +125,10 @@ VALUE_DECODERS: dict[str, Callable[[str], Any]] = {
     "DwTypeExt": int,
     "FaultState": int,
 }
+
+#: Types whose values are whole numbers. A float written to one of these is
+#: rendered without a decimal point, which is what the controller expects.
+INTEGER_TYPES = frozenset(typ for typ, decoder in VALUE_DECODERS.items() if decoder in (int, _to_bool))
 
 DEFAULT_VALUE_BYTES = 12
 

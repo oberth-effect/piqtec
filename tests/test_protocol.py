@@ -2,10 +2,10 @@
 
 import pytest
 
-from piqtec.api.generic import CalendarAPI, DeviceAPI, DriverAPI, ScenarioAPI, decode_value
+from piqtec.api.generic import CalendarAPI, DeviceAPI, DriverAPI, ScenarioAPI, decode_value, encode_value
 from piqtec.constants import MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES
 from piqtec.controller import parse_responses
-from piqtec.exceptions import IQtecError, ReadOnlyVariableError, RequestTooLongError
+from piqtec.exceptions import InvalidValueError, IQtecError, ReadOnlyVariableError, RequestTooLongError
 from piqtec.type_helpers import Get, RequestSet, Set
 from piqtec.utils import find_ids, find_names, match_api, merge_requests, pack_chunks
 
@@ -46,6 +46,38 @@ class TestAddressing:
 
     def test_set_request_renders_booleans_as_digits(self):
         assert driver().set_request(True).setters == [Set(path="1/1/2", value="1")]
+
+
+class TestEncoding:
+    @pytest.mark.parametrize(
+        ("typ", "value", "expected"),
+        [
+            ("byte", 3.0, "3"),
+            ("word", 500.0, "500"),
+            ("bool", 1.0, "1"),
+            ("FiveMinutes", 24.0, "24"),
+            ("OnOffAuto", 2, "2"),
+            ("Temperature", 21.5, "21.5"),
+            ("Temperature", 21, "21"),
+            ("string16", "Obyvak", "Obyvak"),
+        ],
+    )
+    def test_integer_types_are_written_as_whole_numbers(self, typ, value, expected):
+        assert encode_value(typ, value) == expected
+
+    def test_a_fraction_cannot_be_written_to_an_integer_type(self):
+        with pytest.raises(InvalidValueError):
+            encode_value("byte", 3.5)
+
+    def test_strings_are_passed_through_untouched(self):
+        assert encode_value("byte", "3.0") == "3.0"
+
+    def test_what_is_written_can_be_read_back(self):
+        for typ, value in [("byte", 3.0), ("bool", 1.0), ("short", -4.0)]:
+            assert decode_value(typ, encode_value(typ, value)) == value
+
+    def test_set_request_uses_the_declared_type(self):
+        assert driver(typ="byte").set_request(3.0).setters[0].value == "3"
 
 
 class TestDecoding:
@@ -141,9 +173,12 @@ class TestMatchApi:
         with pytest.raises(IQtecError):
             _ = api.address
 
-    def test_unknown_category_raises(self):
-        with pytest.raises(NotImplementedError):
-            match_api({"category": "nonsense"})
+    def test_unknown_category_is_skipped(self):
+        assert match_api({"name": "X", "category": "nonsense"}) is None
+
+    def test_malformed_attribute_is_skipped(self):
+        assert match_api({"name": "X", "category": "driver", "param": "abc"}) is None
+        assert match_api({"name": "X", "category": "driver", "offset": "two"}) is None
 
 
 class TestRequestSet:

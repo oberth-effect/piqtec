@@ -1,11 +1,14 @@
 """Helpers for building requests and interpreting data.xml."""
 
+import logging
 import re
 from collections.abc import Iterable
 
 from .api.generic import API, CalendarAPI, DeviceAPI, DriverAPI, PageAPI, ScenarioAPI
 from .exceptions import RequestTooLongError
 from .type_helpers import RequestSet
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def pack_chunks(
@@ -48,7 +51,21 @@ def pack_chunks(
     return chunks
 
 
-def match_api(obj: dict[str, str]) -> API:
+def match_api(obj: dict[str, str]) -> API | None:
+    """Build the descriptor for one data.xml entry.
+
+    Discovery is best effort: an entry of a category this package does not
+    model, or one with a malformed attribute, is logged and skipped by returning
+    ``None`` rather than making the whole controller unusable.
+    """
+    try:
+        return _match_api(obj)
+    except ValueError as err:
+        _LOGGER.warning("Skipping malformed data.xml entry %r: %s", obj.get("name"), err)
+        return None
+
+
+def _match_api(obj: dict[str, str]) -> API | None:
     mask = obj.get("mask")
     common = {
         "name": str(obj.get("name")),
@@ -79,7 +96,8 @@ def match_api(obj: dict[str, str]) -> API:
         case {"category": "page"}:
             return PageAPI(**common, structure_id=int(obj.get("structure_id", 0)))
         case _:
-            raise NotImplementedError(f"Cannot parse driver {obj}")
+            _LOGGER.debug("Skipping data.xml entry %r of unsupported category %r", obj.get("name"), obj.get("category"))
+            return None
 
 
 def merge_requests(request_sets: Iterable[RequestSet]) -> RequestSet:

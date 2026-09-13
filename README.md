@@ -60,6 +60,15 @@ c.api_call(api.set_request("<VALUE>"))
 print(c.read(api))
 ```
 
+Every variable declared in `data.xml` is also reachable by name through
+`c.apis`, including the categories no unit wraps (scenarios, `device` entries,
+pages):
+
+```python
+api = c.apis["<VARIABLE_NAME>"]
+print(c.read(api))
+```
+
 ### Editing a calendar
 
 A calendar is a fixed grid of 8 days by 8 edges, but the useful view is the list
@@ -144,7 +153,12 @@ even when only one of them changed.
 ## Errors
 
 Everything raised by this package derives from `piqtec.IQtecError`; `requests`
-exceptions never escape. Connection problems surface as `IQtecConnectionError`.
+exceptions never escape. Connection problems surface as `IQtecConnectionError`,
+a reply that cannot be understood as `IQtecResponseError`, a value the
+controller would not accept as `InvalidValueError` (also a `ValueError`) and a
+variable or calendar the installation does not expose as `MissingVariableError`
+(also a `KeyError`). Entries of `data.xml` this package cannot model are
+skipped with a log message rather than preventing the connection.
 
 ## License
 

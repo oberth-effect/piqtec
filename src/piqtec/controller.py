@@ -8,7 +8,7 @@ from xml.etree import ElementTree
 
 import requests
 
-from .api.generic import API, CalendarAPI, DeviceAPI, DriverAPI, PageAPI
+from .api.generic import API, CalendarAPI, DriverAPI, PageAPI
 from .constants import (
     API_PATH,
     DEFAULT_ENCODING,
@@ -20,7 +20,7 @@ from .constants import (
     VALUE_SAFE_CHARS,
     XML_PATH,
 )
-from .exceptions import InvalidValueError, IQtecConnectionError, IQtecResponseError
+from .exceptions import InvalidValueError, IQtecConnectionError, IQtecResponseError, MissingVariableError
 from .type_helpers import Get, RequestSet, Response, ResponseSet, Set
 from .unit.calendar import Calendar, CalendarState
 from .unit.device import Device, DeviceState
@@ -51,6 +51,14 @@ def parse_responses(payload: str) -> ResponseSet:
     return response_set
 
 
+def base_url(proto: str, host: str) -> str:
+    """``proto://host``, accepting a host that already carries a scheme or a trailing slash."""
+    host = host.strip()
+    if "://" in host:
+        proto, _, host = host.partition("://")
+    return f"{proto}://{host.rstrip('/')}"
+
+
 @dataclass
 class State:
     system: SystemState = field(default_factory=SystemState)
@@ -67,6 +75,11 @@ class Controller:
     encoding: str
     timeout: float
 
+    #: Every variable declared in data.xml, by name. This includes the
+    #: categories no unit wraps (scenarios, devices, pages), which can still be
+    #: read and written through :meth:`read` and :meth:`api_call`.
+    apis: dict[str, API]
+
     system: System
     rooms: dict[str, Room]
     sunblinds: dict[str, Sunblind]
@@ -81,28 +94,17 @@ class Controller:
         encoding: str = DEFAULT_ENCODING,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
-        self.host = host
+        self._base_url = base_url(proto, host)
+        self.host = self._base_url.partition("://")[2]
         self.name = name
         self.encoding = encoding
         self.timeout = timeout
-        self._base_url = f"{proto}://{host}"
         self._session = requests.Session()
 
         apis = self._get_apis()
-        self._driver_apis: dict[str, DriverAPI] = {}
-        self._device_apis: dict[str, DeviceAPI] = {}
-        self._page_apis: dict[str, PageAPI] = {}
-        self._calendar_apis: dict[str, CalendarAPI] = {}
-        for api in apis:
-            match api:
-                case DriverAPI():
-                    self._driver_apis[api.name] = api
-                case DeviceAPI():
-                    self._device_apis[api.name] = api
-                case PageAPI():
-                    self._page_apis[api.name] = api
-                case CalendarAPI():
-                    self._calendar_apis[api.name] = api
+        self.apis = {api.name: api for api in apis}
+        self._driver_apis: dict[str, DriverAPI] = {api.name: api for api in apis if isinstance(api, DriverAPI)}
+        self._calendar_apis: dict[str, CalendarAPI] = {api.name: api for api in apis if isinstance(api, CalendarAPI)}
 
         self._index_addresses(apis)
 
@@ -135,15 +137,21 @@ class Controller:
     # -- discovery ---------------------------------------------------------
 
     def _index_addresses(self, apis: Iterable[API]) -> None:
-        """Pre-compute how large a reply each readable address produces."""
+        """Pre-compute how large a reply each readable address produces.
+
+        Also remembers which variables make up each structure, so a structure
+        read that would overflow the reply buffer can be split into them.
+        """
         self._address_bytes: dict[str, int] = {}
         self._structure_bytes: dict[str, int] = {}
+        self._structure_members: dict[str, list[Get]] = {}
         for api in apis:
             if isinstance(api, PageAPI):
                 continue
             self._address_bytes[api.address] = api.response_bytes
             structure = api.structure_address
             self._structure_bytes[structure] = self._structure_bytes.get(structure, 0) + api.response_bytes
+            self._structure_members.setdefault(structure, []).extend(api.get_request().getters)
 
     def _get_xml(self) -> ElementTree.Element:
         response = self._get(self._base_url + XML_PATH)
@@ -153,7 +161,8 @@ class Controller:
             raise IQtecResponseError(f"Malformed {XML_PATH}: {err}") from err
 
     def _get_apis(self) -> list[API]:
-        return [match_api(child.attrib) for child in self._get_xml()]
+        # Entries this package cannot model are skipped rather than fatal.
+        return [api for child in self._get_xml() if (api := match_api(child.attrib)) is not None]
 
     # -- transport ---------------------------------------------------------
 
@@ -184,6 +193,20 @@ class Controller:
             return self._structure_bytes.get(getter.path, MAX_RESPONSE_BYTES)
         return self._address_bytes.get(getter.path, len(getter.path) + DEFAULT_VALUE_BYTES + 2)
 
+    def _readable(self, getters: Iterable[Get]) -> Iterable[Get]:
+        """Getters as they can actually be requested.
+
+        A structure whose reply would not fit in the controller's buffer is read
+        variable by variable instead; the units keep asking for the structure and
+        parse the reply the same way either way.
+        """
+        for getter in getters:
+            members = self._structure_members.get(getter.path)
+            if members and getter.expected_bytes is None and self._expected_bytes(getter) > MAX_RESPONSE_BYTES:
+                yield from members
+            else:
+                yield getter
+
     def _encode(self, value: str) -> str:
         try:
             return quote(value, safe=VALUE_SAFE_CHARS, encoding=self.encoding)
@@ -205,7 +228,7 @@ class Controller:
         seen: set[str] = set()
         getters = [
             (getter.path, self._expected_bytes(getter))
-            for getter in request_set.getters
+            for getter in self._readable(request_set.getters)
             if not (getter.path in seen or seen.add(getter.path))
         ]
         setters = [self._setter_fragment(setter) for setter in request_set.setters]
@@ -250,4 +273,7 @@ class Controller:
 
     def write_calendar(self, idx: str, state: CalendarState) -> None:
         """Replace one calendar's schedule."""
-        self.calendars[idx].write(state)
+        calendar = self.calendars.get(idx)
+        if calendar is None:
+            raise MissingVariableError(f"No calendar {idx!r}")
+        calendar.write(state)

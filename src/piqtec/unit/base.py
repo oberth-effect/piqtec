@@ -6,6 +6,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from ..api.generic import API
+from ..exceptions import MissingVariableError
 from ..type_helpers import Get, RequestSet, ResponseSet
 from ..utils import merge_requests
 
@@ -72,9 +73,17 @@ class StatefulUnit[S: dataclass](ABC):
     def update(self) -> S:
         return self.parse_state(self._controller.api_call(self.get_request))
 
-    def set_value(self, field_name: str, value: Any) -> None:
-        """Write a single variable, addressed by its state field name."""
+    def _require(self, field_name: str) -> API:
+        """The variable behind a state field, or a :class:`MissingVariableError`.
+
+        Every write goes through here, so an installation lacking the variable
+        fails the same way whether it is written alone or as part of a batch.
+        """
         api = self.apis.get(field_name)
         if api is None:
-            raise KeyError(f"{self.idx} has no variable {field_name!r}")
-        self._controller.api_call(api.set_request(value))
+            raise MissingVariableError(f"{self.idx} has no variable {field_name!r}")
+        return api
+
+    def set_value(self, field_name: str, value: Any) -> None:
+        """Write a single variable, addressed by its state field name."""
+        self._controller.api_call(self._require(field_name).set_request(value))

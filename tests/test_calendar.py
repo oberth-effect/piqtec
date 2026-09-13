@@ -1,14 +1,16 @@
 """Tests for the calendar model."""
 
 import json
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from piqtec.api.generic import CalendarAPI
 from piqtec.constants import CALENDAR_DAY_END, CALENDAR_EDGES, CalendarLevel, CalendarType
-from piqtec.exceptions import InvalidValueError
-from piqtec.unit.calendar import CalendarDay, CalendarEdge, CalendarState
+from piqtec.exceptions import InvalidValueError, IQtecError, IQtecResponseError
+from piqtec.type_helpers import Response
+from piqtec.unit.calendar import Calendar, CalendarDay, CalendarEdge, CalendarState
 
 # A real payload read back from a controller.
 SAMPLE = {
@@ -70,6 +72,26 @@ class TestEncode:
         payload = json.dumps(sample().as_json(), separators=(",", ":"), ensure_ascii=False)
         encoded = quote(payload, safe=VALUE_SAFE_CHARS)
         assert len("/control/?2/0/0=") + len(encoded) < MAX_REQUEST_BYTES
+
+    def test_budgeted_length_is_what_goes_on_the_wire(self):
+        # requests re-encodes some characters itself; the budget must count the
+        # bytes the controller actually sees, or a chunk that fits on paper is
+        # dropped by the firmware.
+        from urllib.parse import quote
+
+        import requests
+
+        from piqtec.constants import VALUE_SAFE_CHARS
+
+        payload = json.dumps(sample().as_json(), separators=(",", ":"), ensure_ascii=False)
+        path = "/control/?2/0/0=" + quote(payload, safe=VALUE_SAFE_CHARS)
+        prepared = requests.Request("GET", "http://controller" + path).prepare()
+        assert len(prepared.path_url) == len(path)
+
+    def test_temperatures_are_sent_as_numbers(self):
+        state = sample()
+        state.temperatures[2] = 21
+        assert state.as_json()["Temperatures"][2] == 21.0
 
 
 class TestTransitions:
@@ -174,6 +196,27 @@ class TestTransitions:
         with pytest.raises(InvalidValueError, match="at most 7"):
             day.add_transition(260, CalendarLevel.DAY)
 
+    @pytest.mark.parametrize("order", [[(0, 1), (50, 1), (50, 2)], [(0, 1), (50, 2), (50, 1)]])
+    def test_a_shared_time_is_rejected_whatever_the_order(self, order):
+        with pytest.raises(InvalidValueError, match="share a time"):
+            CalendarDay().set_transitions([CalendarEdge(*e) for e in order])
+
+    def test_an_unknown_level_is_rejected_on_edit(self):
+        with pytest.raises(InvalidValueError, match="not 0, 1 or 2"):
+            self.day().add_transition(100, 9)
+        with pytest.raises(InvalidValueError, match="not 0, 1 or 2"):
+            self.day().set_transition_level(1, -1)
+        with pytest.raises(InvalidValueError, match="not 0, 1 or 2"):
+            CalendarDay().set_transitions([CalendarEdge(0, 3)])
+
+    def test_a_fractional_time_is_rejected_rather_than_truncated(self):
+        with pytest.raises(InvalidValueError, match="whole number"):
+            CalendarDay().set_transitions([CalendarEdge(0, 1), CalendarEdge(10.7, 2)])
+        with pytest.raises(InvalidValueError, match="whole number"):
+            self.day().add_transition(100.5, CalendarLevel.DAY)
+        with pytest.raises(InvalidValueError, match="whole number"):
+            self.day().move_transition(1, 90.5)
+
 
 class TestValidate:
     def test_a_real_calendar_validates(self):
@@ -190,6 +233,19 @@ class TestValidate:
         state.temperatures = [1.0, 2.0]
         with pytest.raises(InvalidValueError, match="temperatures"):
             state.validate()
+
+    def test_rejects_a_temperature_that_is_not_a_number(self):
+        from decimal import Decimal
+
+        for bad in ("21", Decimal("21"), None, True):
+            state = sample()
+            state.temperatures[2] = bad
+            with pytest.raises(InvalidValueError, match="not a number"):
+                state.validate()
+
+    def test_temperature_for_an_unknown_level_is_none(self):
+        assert sample().temperature_for(None) is None
+        assert sample().temperature_for(CalendarDay().level_at(100)) is None
 
     def test_rejects_unpinned_endpoints(self):
         state = sample()
@@ -302,6 +358,104 @@ class TestPeriods:
         assert starts <= {"06:00", "09:55", "15:10", "20:00"}
         assert all(p.end > p.start for p in periods)
 
+    def test_a_transition_in_the_skipped_hour_happens_when_the_clock_jumps(self):
+        state = sample()
+        for day in state.days:
+            day.as_monday = False
+            # 02:30 and 03:15; the first does not exist on the spring-forward day.
+            day.set_transitions([CalendarEdge(0, 1), CalendarEdge(30, 2), CalendarEdge(39, 0), CalendarEdge(120, 1)])
+        start = datetime(2026, 3, 29, tzinfo=self.TZ)
+        periods = state.periods(start, start + timedelta(days=1))
+
+        instants = [(p.start.astimezone(UTC), p.end.astimezone(UTC)) for p in periods]
+        assert all(s < e for s, e in instants), "no period may run backwards in absolute time"
+        assert all(a[1] == b[0] for a, b in zip(instants, instants[1:], strict=False)), "no overlap"
+        day_level = next(p for p in periods if p.level == 2 and p.start.date() == start.date())
+        assert day_level.start == datetime(2026, 3, 29, 3, 0, tzinfo=self.TZ)
+        assert day_level.start.utcoffset() == timedelta(hours=2)
+        assert f"{day_level.end:%H:%M%z}" == "03:15+0200"
+
+    def test_the_fall_back_day_keeps_the_first_occurrence(self):
+        state = sample()
+        for day in state.days:
+            day.as_monday = False
+            day.set_transitions([CalendarEdge(0, 1), CalendarEdge(30, 2), CalendarEdge(39, 0)])
+        start = datetime(2026, 10, 25, tzinfo=self.TZ)
+        periods = state.periods(start, start + timedelta(days=1))
+        repeated = next(p for p in periods if p.level == 2 and p.start.date() == start.date())
+        assert repeated.start.utcoffset() == timedelta(hours=2)
+        assert repeated.end.astimezone(UTC) - repeated.start.astimezone(UTC) == timedelta(hours=1, minutes=45)
+
+    def test_a_period_starting_before_a_flat_day_is_complete(self):
+        state = sample()
+        for day in state.days:
+            day.as_monday = False
+        state.days[0].set_transitions([CalendarEdge(0, CalendarLevel.NIGHT)])  # Monday: NIGHT all day
+        tuesday = datetime(2026, 9, 15, 5, 0, tzinfo=self.TZ)
+        periods = state.periods(tuesday, tuesday + timedelta(minutes=30))
+        assert len(periods) == 1
+        # Sunday's schedule ends on NIGHT at 20:00, and that is when the period began.
+        assert periods[0].start == datetime(2026, 9, 13, 20, 0, tzinfo=self.TZ)
+        assert periods[0].end == datetime(2026, 9, 15, 6, 0, tzinfo=self.TZ)
+
+    def test_a_period_ending_after_flat_days_is_complete(self):
+        state = sample()
+        for day in state.days:
+            day.as_monday = False
+        for weekday in (2, 3):  # Wednesday and Thursday: NIGHT all day
+            state.days[weekday].set_transitions([CalendarEdge(0, CalendarLevel.NIGHT)])
+        tuesday = datetime(2026, 9, 15, 21, 0, tzinfo=self.TZ)
+        periods = state.periods(tuesday, tuesday + timedelta(hours=1))
+        assert len(periods) == 1
+        assert periods[0].start == datetime(2026, 9, 15, 20, 0, tzinfo=self.TZ)
+        assert periods[0].end == datetime(2026, 9, 18, 6, 0, tzinfo=self.TZ)
+
+    def test_a_calendar_without_all_weekdays_yields_nothing(self):
+        assert CalendarState().periods(self.MONDAY, self.MONDAY + timedelta(days=1)) == []
+        short = CalendarState.from_json({"Days": [{"Edges": [[0, 1], [288, 1]]}] * 3})
+        assert short.periods(self.MONDAY, self.MONDAY + timedelta(days=1)) == []
+
+    def test_day_for_weekday_is_none_when_the_calendar_has_no_such_day(self):
+        assert CalendarState().day_for_weekday(0) is None
+        assert sample().day_for_weekday(9) is None
+
     def test_the_time_zone_of_the_window_is_used(self):
         periods = sample().periods(self.MONDAY, self.MONDAY + timedelta(days=1))
         assert all(p.start.tzinfo is self.TZ for p in periods)
+
+
+class TestParseState:
+    def calendar(self) -> Calendar:
+        api = CalendarAPI(
+            name="_CALENDAR_00", access="PUS", param=True, typ="calendar", structure_id=0, offset=0, mask=None
+        )
+        return Calendar(controller=None, idx="_CALENDAR_00", apis={"_CALENDAR_00": api})
+
+    def parse(self, raw: str) -> CalendarState:
+        return self.calendar().parse_state({"2/0/0": Response("2/0/0", raw)})
+
+    def test_a_real_payload_is_read(self):
+        assert self.parse(json.dumps(SAMPLE)).name == "GeneralProfile"
+
+    def test_a_switched_off_calendar_is_empty(self):
+        assert self.parse("!off").days == []
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "",
+            "{",
+            "null",
+            "[]",
+            '"x"',
+            '{"Days":[1]}',
+            '{"Days":null}',
+            '{"Days":[{"Edges":[[1]]}]}',
+            '{"Days":[{"Edges":[["a","b"]]}]}',
+            '{"Temperatures":["a"]}',
+        ],
+    )
+    def test_an_unreadable_payload_is_an_iqtec_error(self, raw):
+        with pytest.raises(IQtecResponseError) as err:
+            self.parse(raw)
+        assert isinstance(err.value, IQtecError)
